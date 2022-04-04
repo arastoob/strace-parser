@@ -1,5 +1,4 @@
 use std::path::PathBuf;
-use strace_parser::error::Error;
 use clap::Parser as ClapParser;
 use strace_parser::parser::Parser;
 
@@ -12,11 +11,15 @@ struct Args {
     log_path: PathBuf,
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut parser = Parser::new(args.log_path);
-    parser.parse()?;
+    let operations = parser.parse()?;
+
+    for operation in operations {
+        println!("{}", operation);
+    }
 
     Ok(())
 }
