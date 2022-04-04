@@ -1,3 +1,7 @@
-pub mod error;
-pub mod parser;
-pub mod ops;
+mod error;
+mod parser;
+mod ops;
+
+// re-export the required modules
+pub use parser::Parser;
+pub use ops::{Operation, OperationType};

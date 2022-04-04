@@ -316,12 +316,11 @@ impl Parser {
 #[cfg(test)]
 mod test {
     use std::path::PathBuf;
-    use crate::error::Error;
     use crate::ops::OperationType;
     use crate::parser::Parser;
 
     #[test]
-    fn openat() -> Result<(), Error> {
+    fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 9".to_string();
         let operation = parser.openat(line.as_ref())?;
@@ -342,7 +341,7 @@ mod test {
     }
 
     #[test]
-    fn read() -> Result<(), Error> {
+    fn read() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 3".to_string();
@@ -369,7 +368,7 @@ mod test {
     }
 
     #[test]
-    fn pread() -> Result<(), Error> {
+    fn pread() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 3".to_string();
@@ -403,7 +402,7 @@ mod test {
     }
 
     #[test]
-    fn write() -> Result<(), Error> {
+    fn write() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CREAT) = 5".to_string();
@@ -458,7 +457,7 @@ mod test {
     }
 
     #[test]
-    fn get_random() -> Result<(), Error> {
+    fn get_random() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "getrandom('a_buf', 16, GRND_NONBLOCK) = 16".to_string();
         let operation = parser.get_random(line.as_ref())?;

@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 use clap::Parser as ClapParser;
-use strace_parser::parser::Parser;
+use strace_parser::Parser;
 
 /// A library for parsing the strace output log
 #[derive(ClapParser, Debug)]
