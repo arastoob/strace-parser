@@ -94,11 +94,6 @@ impl Parser {
         // an openat line of the strace log is like:
         //  openat(dirfd, "a-path", flags) = fd
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace("\"", "")
-            .replace("\'", "");
-
         let parts: Vec<&str> = line.split("=").collect();
         let body = parts[0]; // the command body
         let fd = parts[1].trim().parse::<i32>()?; // the file descriptor after '='
@@ -109,7 +104,7 @@ impl Parser {
 
         let parts: Vec<&str> = args.split(",").collect();
         let _dirfd = parts[0];
-        let path = parts[1].to_string();
+        let path = parts[1].trim().to_string();
         let flags = parts[2];
         let _mode = parts[parts.len() - 1].to_string();
 
@@ -154,11 +149,6 @@ impl Parser {
         //
         // this operation reads len bytes from opened file offset and changes the opened file offset after read
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace("\"", "")
-            .replace("\'", "");
-
         let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
 
         // extract the read arguments between '(' and ')'
@@ -167,7 +157,7 @@ impl Parser {
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
-        let _buf = parts[1].to_string();
+        let _buf = parts[1].trim().to_string();
         let len = parts[parts.len() - 1].trim().parse::<usize>()?;
 
         // find the read path based on the file descriptor
@@ -201,11 +191,6 @@ impl Parser {
         //
         // the operation reads len bytes from input offset and does not change the opened file offset after read
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace("\"", "")
-            .replace("\'", "");
-
         let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
         // the bytes read is after '='
 
@@ -215,7 +200,7 @@ impl Parser {
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
-        let _buf = parts[1].to_string();
+        let _buf = parts[1].trim().to_string();
         let len = parts[2].trim().parse::<usize>()?;
         let offset = parts[parts.len() - 1].trim().parse::<i32>()?;
 
@@ -240,10 +225,6 @@ impl Parser {
         // a write line of the strace log is like:
         //  write(fd, "a-string", len) = write_len
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace("\'", "");
-
         let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
         // the bytes written is after '='
 
@@ -252,7 +233,7 @@ impl Parser {
         let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
 
         let parts: Vec<&str> = args.split(",").collect();
-        let fd = parts[0].parse::<i32>()?;
+        let fd = parts[0].trim().parse::<i32>()?;
         let content = parts[1].trim().to_string();
         let len = parts[parts.len() - 1].trim().parse::<usize>()?;
 
@@ -289,10 +270,6 @@ impl Parser {
         // a mkdir line of the strace log is like:
         //  mkdir("a-path", mode) = 0
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace("\'", "");
-
         let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
         // the error code is after '='
 
@@ -301,7 +278,7 @@ impl Parser {
         let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
 
         let parts: Vec<&str> = args.split(",").collect();
-        let path = parts[0].to_string();
+        let path = parts[0].trim().to_string();
         let mode = parts[1].trim().to_string();
 
         Ok(Operation::mkdir(mode, path))
@@ -313,12 +290,6 @@ impl Parser {
         // a getrandom line of the strace log is like:
         //  getrandom("a-buf", len, flags) = random_bytes_len
 
-        // replace single and double quotes and spaces
-        let line = line
-            .replace(" ", "")
-            .replace("\"", "")
-            .replace("\'", "");
-
         let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
         // the number of random bytes generated is after '='
 
@@ -328,8 +299,8 @@ impl Parser {
 
         let parts: Vec<&str> = args.split(",").collect();
         let _buf = parts[0].to_string();
-        let len = parts[1].parse::<usize>()?;
-        let _flags = parts[parts.len() - 1].to_string();
+        let len = parts[1].trim().parse::<usize>()?;
+        let _flags = parts[parts.len() - 1].trim().to_string();
 
 
         Ok(Operation::get_random(len))
@@ -345,7 +316,7 @@ mod test {
     #[test]
     fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
-        let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 9".to_string();
+        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 9".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::OpenAt);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -353,7 +324,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
 
 
-        let line = "openat(AT_FDCWD, 'another_path', O_RDONLY|O_CREAT|O_CLOEXEC) = 7".to_string();
+        let line = "openat(AT_FDCWD, another_path, O_RDONLY|O_CREAT|O_CLOEXEC) = 7".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "another_path");
@@ -367,7 +338,7 @@ mod test {
     fn read() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 3".to_string();
         let _operation = parser.openat(openat_line.as_ref())?;
 
         let read_line1 = "read(3, buf, 50) = 50".to_string();
@@ -394,7 +365,7 @@ mod test {
     fn pread() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 3".to_string();
         let _operation = parser.openat(openat_line.as_ref())?;
 
         let read_line1 = "pread(3, buf, 50, 100) = 50".to_string();
@@ -428,7 +399,7 @@ mod test {
     fn write() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CREAT) = 5".to_string();
+        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -436,7 +407,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
 
         // first write
-        let write_line1 = "write(5, 'some content here', 17) = 17".to_string();
+        let write_line1 = "write(5, some content here, 17) = 17".to_string();
         let write_op1 = parser.write(write_line1.as_ref())?;
         assert_eq!(write_op1.kind, OperationType::Write("some content here".to_string()));
         assert_eq!(write_op1.path.expect("failed to extract the path"), "a_path");
@@ -444,7 +415,7 @@ mod test {
         assert_eq!(write_op1.offset.expect("failed to extract the offset"), 0);
 
         // second write
-        let write_line2 = "write(5, 'hello', 5) = 5".to_string();
+        let write_line2 = "write(5, hello, 5) = 5".to_string();
         let write_op2 = parser.write(write_line2.as_ref())?;
         assert_eq!(write_op2.kind, OperationType::Write("hello".to_string()));
         assert_eq!(write_op2.path.expect("failed to extract the path"), "a_path");
@@ -453,7 +424,7 @@ mod test {
 
 
         // open the file one more time to check the offset
-        let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CREAT) = 5".to_string();
+        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -461,7 +432,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 17 + 5);
 
         // now open the file with truncate flag, which should zero the size and offset
-        let line = "openat(AT_FDCWD, 'a_path', O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
+        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -469,7 +440,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
 
         // write after truncate
-        let write_line2 = "write(5, 'some other content here', 10) = 10".to_string();
+        let write_line2 = "write(5, some other content here, 10) = 10".to_string();
         let write_op2 = parser.write(write_line2.as_ref())?;
         assert_eq!(write_op2.kind, OperationType::Write("some other content here".to_string()));
         assert_eq!(write_op2.path.expect("failed to extract the path"), "a_path");
@@ -482,7 +453,7 @@ mod test {
     #[test]
     fn get_random() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
-        let line = "getrandom('a_buf', 16, GRND_NONBLOCK) = 16".to_string();
+        let line = "getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
         let operation = parser.get_random(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::GetRandom);
         assert_eq!(operation.size.expect("failed to extract size"), 16);
