@@ -92,18 +92,22 @@ impl Parser {
 
         // replace single and double quotes and spaces
         let line = line
-            .replace(" ", "")
             .replace("\"", "")
             .replace("\'", "");
 
         let parts: Vec<&str> = line.split("=").collect();
-        let op = parts[0]; // the command body
-        let fd = parts[1].parse::<i32>()?; // the file descriptor after '='
+        let body = parts[0]; // the command body
+        let fd = parts[1].trim().parse::<i32>()?; // the file descriptor after '='
 
-        let parts: Vec<&str> = op.split(",").collect();
+        // extract the read arguments between '(' and ')'
+        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
+        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+
+        let parts: Vec<&str> = args.split(",").collect();
         let _dirfd = parts[0];
         let path = parts[1].to_string();
-        let flags = parts[parts.len() - 1];
+        let flags = parts[2];
+        let _mode = parts[parts.len() - 1].to_string();
 
         let (offset, size)  = match self.fd_map.get(&fd) {
             Some(of) => {
@@ -148,7 +152,6 @@ impl Parser {
 
         // replace single and double quotes and spaces
         let line = line
-            .replace(" ", "")
             .replace("\"", "")
             .replace("\'", "");
 
@@ -159,22 +162,31 @@ impl Parser {
         let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
 
         let parts: Vec<&str> = args.split(",").collect();
-        let fd = parts[0].parse::<i32>()?;
+        let fd = parts[0].trim().parse::<i32>()?;
         let _buf = parts[1].to_string();
-        let len = parts[parts.len() - 1].parse::<usize>()?;
+        let len = parts[parts.len() - 1].trim().parse::<usize>()?;
 
         // find the read path based on the file descriptor
-        let opend_file = self.fd_map.get(&fd)
-            .ok_or(Error::NotFound(format!("file descriptor {}", fd)))?;
+        match self.fd_map.get(&fd) {
+            Some(opend_file) => {
+                let path = opend_file.path.clone();
+                let offset = opend_file.offset;
+                let size = opend_file.size;
 
-        let path = opend_file.path.clone();
-        let offset = opend_file.offset;
-        let size = opend_file.size;
+                // update the offset of the opened file in the fd_map
+                self.fd_map.insert(fd, OpenedFile::new(path.clone(), offset + len as i32, size));
 
-        // update the offset of the opened file in the fd_map
-        self.fd_map.insert(fd, OpenedFile::new(path.clone(), offset + len as i32, size));
+                Ok(Operation::read(len, offset, path))
+            },
+            None => {
+                // For some reason the fd is not available. One case is having an operation
+                // like ioctl(fd, ...) followed by a read(4, ...) operation.
+                // We are not tracking hardware-specific calls.
+                Ok(Operation::no_op())
+            }
+        }
 
-        Ok(Operation::read(len, offset, path))
+
     }
 
     // parse a read line
@@ -187,7 +199,6 @@ impl Parser {
 
         // replace single and double quotes and spaces
         let line = line
-            .replace(" ", "")
             .replace("\"", "")
             .replace("\'", "");
 
@@ -199,16 +210,24 @@ impl Parser {
         let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
 
         let parts: Vec<&str> = args.split(",").collect();
-        let fd = parts[0].parse::<i32>()?;
+        let fd = parts[0].trim().parse::<i32>()?;
         let _buf = parts[1].to_string();
-        let len = parts[2].parse::<usize>()?;
-        let offset = parts[parts.len() - 1].parse::<i32>()?;
+        let len = parts[2].trim().parse::<usize>()?;
+        let offset = parts[parts.len() - 1].trim().parse::<i32>()?;
 
         // find the read path based on the file descriptor
-        let opend_file = self.fd_map.get(&fd)
-            .ok_or(Error::NotFound(format!("file descriptor {}", fd)))?;
+        match self.fd_map.get(&fd) {
+            Some(opend_file) => {
+                Ok(Operation::read(len, offset, opend_file.path.clone()))
+            },
+            None => {
+                // For some reason the fd is not available. One case is having an operation
+                // like ioctl(fd, ...) followed by a read(4, ...) operation.
+                // We are not tracking hardware-specific calls.
+                Ok(Operation::no_op())
+            }
+        }
 
-        Ok(Operation::read(len, offset, opend_file.path.clone()))
     }
 
     // parse a write line
