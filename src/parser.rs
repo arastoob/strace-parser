@@ -8,7 +8,8 @@ use crate::ops::Operation;
 
 pub struct Parser {
     log_file: PathBuf,
-    fd_map: HashMap<i32, OpenedFile>
+    fd_map: HashMap<i32, OpenedFile>,
+    files: HashMap<String, usize> // keep existing files' size
 }
 
 #[derive(Debug)]
@@ -32,7 +33,8 @@ impl Parser {
     pub fn new(log_file: PathBuf) -> Self {
         Parser {
             log_file,
-            fd_map: HashMap::new()
+            fd_map: HashMap::new(),
+            files: HashMap::new()
         }
     }
 
@@ -54,30 +56,45 @@ impl Parser {
                 continue;
             }
 
-            if line.starts_with("openat") {
+            if line.starts_with("openat(") {
                 let operation = self.openat(line.as_ref())?;
                 operations.push(operation);
             }
 
-            if line.starts_with("read") {
+            if line.starts_with("read(") {
                 // read op updates the file offset
                 operations.push(self.read(line.as_ref())?);
             }
 
-            if line.starts_with("pread") {
+            if line.starts_with("stat(") {
+                // read op updates the file offset
+                operations.push(self.stat(line.as_ref())?);
+            }
+
+            if line.starts_with("fstat(") {
+                // read op updates the file offset
+                operations.push(self.fstat(line.as_ref())?);
+            }
+
+            if line.starts_with("statx(") {
+                // read op updates the file offset
+                operations.push(self.statx(line.as_ref())?);
+            }
+
+            if line.starts_with("pread(") {
                 // pread op does not update the file offset
                 operations.push(self.pread(line.as_ref())?);
             }
 
-            if line.starts_with("getrandom") {
+            if line.starts_with("getrandom(") {
                 operations.push(self.get_random(line.as_ref())?);
             }
 
-            if line.starts_with("write") {
+            if line.starts_with("write(") {
                 operations.push(self.write(line.as_ref())?);
             }
 
-            if line.starts_with("mkdir") {
+            if line.starts_with("mkdir(") {
                 operations.push(self.mkdir(line.as_ref())?);
             }
         }
@@ -90,23 +107,31 @@ impl Parser {
 
     // parse an openat line
     fn openat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // an openat line of the strace log is like:
+        //  openat(dirfd, "a-path", flags, mode) = fd
+        // or
         //  openat(dirfd, "a-path", flags) = fd
 
-        let parts: Vec<&str> = line.split("=").collect();
-        let body = parts[0]; // the command body
-        let fd = parts[1].trim().parse::<i32>()?; // the file descriptor after '='
 
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // the file descriptor after '='
+        let fd = line.split_at(line.rfind("=").ok_or(Error::NotFound("= from openat line".to_string()))? + 1).1;
+        let fd = fd.trim().parse::<i32>()?;
 
-        let parts: Vec<&str> = args.split(",").collect();
-        let _dirfd = parts[0];
-        let path = parts[1].trim().to_string();
-        let flags = parts[2];
-        let _mode = parts[parts.len() - 1].to_string();
+        // extract the input arguments
+        let args = self.args(line, "openat")?;
+
+        // extract the path from input arguments
+        let path = self.path(&args, "openat")?;
+
+        let flags_mode = args.split_at(args.rfind("\"").ok_or(Error::NotFound("\" from openat line".to_string()))? + 2).1;
+
+        let flags = if flags_mode.contains(",") {
+            // there is a mode in the arguments
+            let (flags, _mode) = flags_mode.split_at(flags_mode.find(",").ok_or(Error::NotFound(", from openat line".to_string()))?);
+            flags
+        } else {
+            flags_mode
+        };
 
         let (offset, size)  = match self.fd_map.get(&fd) {
             Some(of) => {
@@ -143,17 +168,13 @@ impl Parser {
 
     // parse a read line
     fn read(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // a read line of the strace log is like:
         //  read(fd, "a-buf", len) = read_len
         //
         // this operation reads len bytes from opened file offset and changes the opened file offset after read
 
-        let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
-
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // extract the input arguments
+        let args = self.args(line, "read")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -179,24 +200,132 @@ impl Parser {
                 Ok(Operation::no_op())
             }
         }
+    }
 
+    // parse a stat line
+    fn stat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a stat line of the strace log is like:
+        //  stat("a-path", {st_mode=S_IFREG|0664, st_size=62, ...}) = 0
+        //
+        // the file information such as st_size is available between {}
+
+        // extract the input arguments
+        let args = self.args(line, "stat")?;
+
+        // extract the path from input arguments
+        let path = self.path(&args, "stat")?;
+
+        let st_size: String = args.trim().split(",")
+            .filter(|stat| stat.contains("st_size"))
+            .map(|str| str.to_string())
+            .collect();
+
+        let file_size = st_size.split_at(
+            st_size.find("=").ok_or(Error::NotFound("=".to_string()))? + 1
+        ).1.trim().parse::<usize>()?;
+
+        // add the file path along with its size
+        self.files.insert(path.clone(), file_size);
+
+        Ok(Operation::stat(path))
+    }
+
+    // parse a fstat line
+    fn fstat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a fstat line of the strace log is like:
+        //  fstat(fd, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0
+        //
+        // the file information such as st_size is available between {}
+
+        // extract the input arguments
+        let args = self.args(line, "fstat")?;
+
+        let (fd, remaining) = args.split_at(args.find(",").ok_or(Error::NotFound("(".to_string()))?);
+        let fd = fd.trim().parse::<i32>()?;
+
+        let st_size: String = remaining.trim().split(",")
+            .filter(|stat| stat.contains("st_size"))
+            .map(|str| str.to_string())
+            .collect();
+
+        let file_size = st_size.split_at(
+            st_size.find("=").ok_or(Error::NotFound("=".to_string()))? + 1
+        ).1.trim().parse::<usize>()?;
+
+        // find the read path based on the file descriptor
+        match self.fd_map.get(&fd) {
+            Some(opend_file) => {
+                let path = opend_file.path.clone();
+
+                // add the file path along with its size
+                self.files.insert(path.clone(), file_size);
+
+                Ok(Operation::stat(path))
+            },
+            None => {
+                Ok(Operation::no_op())
+            }
+        }
+    }
+
+    // parse a statx line
+    fn statx(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a statx line of the strace log is like one of the followings:
+        //  statx(8, "", AT_STATX_SYNC_AS_STAT|AT_EMPTY_PATH, STATX_ALL, {stx_mask=STATX_ALL|0x1000, stx_attributes=0, stx_mode=S_IFREG|0644, stx_size=1335, ...}) = 0
+        // or
+        // statx(AT_FDCWD, "a-path", AT_STATX_SYNC_AS_STAT, STATX_ALL, {stx_mask=STATX_ALL|0x1000, stx_attributes=0, stx_mode=S_IFREG|0644, stx_size=19153, ...}) = 0
+        //
+        // the file information such as stx_size is available between {}
+
+        // extract the input arguments
+        let args = self.args(line, "statx")?;
+
+        let (fd, remaining) = args.split_at(args.find(",").ok_or(Error::NotFound(",".to_string()))?);
+        let remaining = remaining.trim();
+
+        let stx_size: String = remaining.split(",")
+            .filter(|stat| stat.contains("stx_size"))
+            .map(|str| str.to_string())
+            .collect();
+
+        let file_size = stx_size.split_at(
+            stx_size.find("=").ok_or(Error::NotFound("=".to_string()))? + 1
+        ).1.trim().parse::<usize>()?;
+
+        let path = if fd.contains("AT_FDCWD") {
+            // extract the path from input arguments
+            self.path(&remaining, "statx")?
+        } else {
+            let fd = fd.trim().parse::<i32>()?;
+
+            // find the read path based on the file descriptor
+            match self.fd_map.get(&fd) {
+                Some(opend_file) => {
+                    let path = opend_file.path.clone();
+                    path
+                },
+                None => {
+                    return Ok(Operation::no_op());
+                }
+            }
+        };
+
+        // add the file path along with its size
+        self.files.insert(path.clone(), file_size);
+
+        Ok(Operation::stat(path))
 
     }
 
     // parse a read line
     fn pread(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // a pread (or pread64) line of the strace log is like:
-        //  pread(fd, "a-buf", len, offset) = read_len
+        //  pread(fd, "a-buf", len, offset) = len
         //
         // the operation reads len bytes from input offset and does not change the opened file offset after read
 
-        let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
-        // the bytes read is after '='
-
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // extract the input arguments
+        let args = self.args(line, "pread")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -221,16 +350,11 @@ impl Parser {
 
     // parse a write line
     fn write(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // a write line of the strace log is like:
         //  write(fd, "a-string", len) = write_len
 
-        let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
-        // the bytes written is after '='
-
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // extract the input arguments
+        let args = self.args(line, "write")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -266,36 +390,27 @@ impl Parser {
 
     // parse a write line
     fn mkdir(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // a mkdir line of the strace log is like:
         //  mkdir("a-path", mode) = 0
 
-        let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
-        // the error code is after '='
+        // extract the input arguments
+        let args = self.args(line, "mkdir")?;
 
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // extract the path from input arguments
+        let path = self.path(&args, "mkdir")?;
 
-        let parts: Vec<&str> = args.split(",").collect();
-        let path = parts[0].trim().to_string();
-        let mode = parts[1].trim().to_string();
+        let (_, mode) = args.split_at(args.rfind(",").ok_or(Error::NotFound("\"".to_string()))?);
 
-        Ok(Operation::mkdir(mode, path))
+        Ok(Operation::mkdir(mode.to_string(), path))
     }
 
     // parse a getrandom line
     fn get_random(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-
         // a getrandom line of the strace log is like:
         //  getrandom("a-buf", len, flags) = random_bytes_len
 
-        let body = line.split_at(line.rfind("=").ok_or(Error::NotFound("=".to_string()))?).0;
-        // the number of random bytes generated is after '='
-
-        // extract the read arguments between '(' and ')'
-        let args = body.split_at(body.find("(").ok_or(Error::NotFound("(".to_string()))? + 1).1;
-        let args = args.split_at(args.rfind(")").ok_or(Error::NotFound(")".to_string()))?).0;
+        // extract the input arguments
+        let args = self.args(line, "getrandom")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let _buf = parts[0].to_string();
@@ -304,6 +419,26 @@ impl Parser {
 
 
         Ok(Operation::get_random(len))
+    }
+
+    // extract the input args in-between ( and ) from the input string
+    fn args(&self, str: &str, callee: &str) -> Result<String, Box<dyn std::error::Error>> {
+
+        // the body is before '='
+        let body = str.split_at(str.rfind("=").ok_or(Error::NotFound(format!("= from {} line", callee)))?).0;
+
+        let args = body.split_at(body.find("(").ok_or(Error::NotFound(format!("( from {} line", callee)))? + 1).1;
+        Ok(args.split_at(args.rfind(")").ok_or(Error::NotFound(format!(") from {} line", callee)))?).0.to_string())
+    }
+
+    // extract a path in-between " and " from the input string
+    fn path(&self, str: &str, callee: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let path = str.split_at(str.find("\"").ok_or(Error::NotFound(format!("\" from {} line", callee)))? + 1).1;
+        Ok(path.split_at(path.rfind("\"").ok_or(Error::NotFound(format!("\" from {} line", callee)))?).0.to_string())
+    }
+
+    pub fn accessed_files(&self) -> Result<HashMap<String, usize>, Box<dyn std::error::Error>> {
+        Ok(self.files.clone())
     }
 }
 
@@ -316,7 +451,7 @@ mod test {
     #[test]
     fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
-        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 9".to_string();
+        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::OpenAt);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -324,7 +459,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
 
 
-        let line = "openat(AT_FDCWD, another_path, O_RDONLY|O_CREAT|O_CLOEXEC) = 7".to_string();
+        let line = "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "another_path");
@@ -338,7 +473,7 @@ mod test {
     fn read() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
         let _operation = parser.openat(openat_line.as_ref())?;
 
         let read_line1 = "read(3, buf, 50) = 50".to_string();
@@ -365,7 +500,7 @@ mod test {
     fn pread() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
         let _operation = parser.openat(openat_line.as_ref())?;
 
         let read_line1 = "pread(3, buf, 50, 100) = 50".to_string();
@@ -399,7 +534,7 @@ mod test {
     fn write() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut parser = Parser::new(PathBuf::new());
-        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT) = 5".to_string();
+        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -424,7 +559,7 @@ mod test {
 
 
         // open the file one more time to check the offset
-        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT) = 5".to_string();
+        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -432,7 +567,7 @@ mod test {
         assert_eq!(operation.offset.expect("failed to extract the offset"), 17 + 5);
 
         // now open the file with truncate flag, which should zero the size and offset
-        let line = "openat(AT_FDCWD, a_path, O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
+        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(operation.path.expect("failed to extract the path"), "a_path");
@@ -457,6 +592,24 @@ mod test {
         let operation = parser.get_random(line.as_ref())?;
         assert_eq!(operation.kind, OperationType::GetRandom);
         assert_eq!(operation.len.expect("failed to extract size"), 16);
+
+        Ok(())
+    }
+
+    #[test]
+    fn fstat() -> Result<(), Box<dyn std::error::Error>> {
+
+        let mut parser = Parser::new(PathBuf::new());
+        let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let _operation = parser.openat(openat_line.as_ref())?;
+
+        let fstat_line = "fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
+        let fstat_op = parser.fstat(fstat_line.as_ref())?;
+        assert_eq!(fstat_op.kind, OperationType::Stat);
+
+        assert_eq!(parser.files.len(), 1);
+        let file_size = parser.files.get("a_path").expect("failed to get the first entry");
+        assert_eq!(*file_size, 95921 as usize);
 
         Ok(())
     }

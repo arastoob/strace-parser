@@ -21,5 +21,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", operation);
     }
 
+    println!("\naccessed files:");
+
+    let accessed_files = parser.accessed_files()?;
+    for (path, size) in accessed_files {
+        println!("file: {}, size: {}", path, size);
+    }
+
     Ok(())
 }

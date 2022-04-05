@@ -9,6 +9,7 @@ pub enum OperationType {
     Mknod,
     OpenAt,
     GetRandom,
+    Stat,
     NoOp
 }
 pub struct Operation {
@@ -55,6 +56,10 @@ impl Operation {
     pub fn get_random(size: usize) -> Self {
         Operation::new(OperationType::GetRandom, Some(size), None, None)
     }
+
+    pub fn stat(path: String) -> Self {
+        Operation::new(OperationType::Stat, None, None, Some(path))
+    }
 }
 
 impl fmt::Display for Operation {
@@ -70,6 +75,7 @@ impl fmt::Display for Operation {
             &OperationType::Write(ref content) => write!(f, "write({}, {}, {}, {})", path, content, offset, len),
             &OperationType::OpenAt => write!(f, "open({}, {})", path, offset),
             &OperationType::GetRandom => write!(f, "get_random({})", len),
+            &OperationType::Stat => write!(f, "stat({})", path),
             &OperationType::NoOp => write!(f, "no-op"),
         }
     }
