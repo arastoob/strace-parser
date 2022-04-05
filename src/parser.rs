@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use crate::error::Error;
+use crate::OperationType;
 use crate::ops::Operation;
 
 pub struct Parser {
@@ -80,6 +81,9 @@ impl Parser {
                 operations.push(self.mkdir(line.as_ref())?);
             }
         }
+
+        // remove no-ops
+        operations.retain(|op| op.kind != OperationType::NoOp);
 
         Ok(operations)
     }
