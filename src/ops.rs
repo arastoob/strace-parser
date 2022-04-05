@@ -13,16 +13,16 @@ pub enum OperationType {
 }
 pub struct Operation {
     pub kind: OperationType,
-    pub size: Option<usize>,
+    pub len: Option<usize>,
     pub offset: Option<i32>,
     pub path: Option<String>,
 }
 
 impl Operation {
-    fn new(kind: OperationType, size: Option<usize>, offset: Option<i32>, path: Option<String>) -> Self {
+    fn new(kind: OperationType, len: Option<usize>, offset: Option<i32>, path: Option<String>) -> Self {
         Operation {
             kind,
-            size,
+            len,
             offset,
             path,
         }
@@ -61,15 +61,15 @@ impl fmt::Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let path = self.path.clone().unwrap_or("".to_string());
         let offset = self.offset.unwrap_or(0);
-        let size = self.size.unwrap_or(0);
+        let len = self.len.unwrap_or(0);
 
         match &self.kind {
             &OperationType::Mkdir(ref mode) => write!(f, "mkdir({}, {})", path, mode),
-            &OperationType::Mknod => write!(f, "mknod({}, {}, {})", path, offset, size),
-            &OperationType::Read => write!(f, "read({}, {}, {})", path, offset, size),
-            &OperationType::Write(ref content) => write!(f, "write({}, {}, {}, {})", path, content, offset, size),
+            &OperationType::Mknod => write!(f, "mknod({}, {}, {})", path, offset, len),
+            &OperationType::Read => write!(f, "read({}, {}, {})", path, offset, len),
+            &OperationType::Write(ref content) => write!(f, "write({}, {}, {}, {})", path, content, offset, len),
             &OperationType::OpenAt => write!(f, "open({}, {})", path, offset),
-            &OperationType::GetRandom => write!(f, "get_random({})", size),
+            &OperationType::GetRandom => write!(f, "get_random({})", len),
             &OperationType::NoOp => write!(f, "no-op"),
         }
     }
