@@ -1,6 +1,5 @@
 use crate::error::Error;
 use crate::ops::Operation;
-use crate::OperationType;
 use std::collections::HashMap;
 use std::fmt::Formatter;
 use std::fs::File;
@@ -128,7 +127,7 @@ impl Parser {
         }
 
         // remove no-ops
-        operations.retain(|op| op.kind != OperationType::NoOp);
+        operations.retain(|op| op != &Operation::NoOp);
 
         Ok(operations)
     }
@@ -408,9 +407,12 @@ impl Parser {
         // extract the path from input arguments
         let path = self.path(&args, "mkdir")?;
 
-        let (_, mode) = args.split_at(args.rfind(",").ok_or(Error::NotFound("\"".to_string()))?);
+        let mode = args
+            .split_at(args.rfind(",").ok_or(Error::NotFound("\"".to_string()))? + 1)
+            .1
+            .trim();
 
-        Ok(Operation::mkdir(mode.to_string(), path))
+        Ok(Operation::mkdir(path, mode.to_string()))
     }
 
     // parse a getrandom line
@@ -528,8 +530,8 @@ impl Parser {
 
 #[cfg(test)]
 mod test {
-    use crate::ops::OperationType;
     use crate::parser::Parser;
+    use crate::Operation;
     use std::path::PathBuf;
 
     #[test]
@@ -537,24 +539,15 @@ mod test {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
         let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::OpenAt);
-        assert_eq!(
-            operation.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert!(operation.len.is_none());
-        assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
+        assert_eq!(operation, Operation::OpenAt("a_path".to_string(), 0));
 
         let line =
             "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
         let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(
-            operation.path.expect("failed to extract the path"),
-            "another_path"
+            operation,
+            Operation::Mknod("another_path".to_string(), 0, 0)
         );
-        assert_eq!(operation.len.expect("failed to extract the size"), 0);
-        assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
 
         Ok(())
     }
@@ -567,20 +560,11 @@ mod test {
 
         let read_line1 = "read(3, buf, 50) = 50".to_string();
         let read_op1 = parser.read(read_line1.as_ref())?;
-        assert_eq!(read_op1.kind, OperationType::Read);
-        assert!(read_op1.offset.is_some());
-        assert_eq!(read_op1.offset.expect("failed to extract the offset"), 0);
-        assert_eq!(read_op1.path.expect("failed to extract the path"), "a_path");
-        assert!(read_op1.len.is_some());
-        assert_eq!(read_op1.len.expect("failed to extract the size"), 50);
+        assert_eq!(read_op1, Operation::Read("a_path".to_string(), 0, 50));
 
         let read_line2 = "read(3, buf, 20) = 20".to_string();
         let read_op2 = parser.read(read_line2.as_ref())?;
-        assert_eq!(read_op2.kind, OperationType::Read);
-        assert!(read_op2.offset.is_some());
-        assert_eq!(read_op2.offset.expect("failed to extract the offset"), 50);
-        assert_eq!(read_op2.path.expect("failed to extract the path"), "a_path");
-        assert_eq!(read_op2.len.expect("failed to extract the size"), 20);
+        assert_eq!(read_op2, Operation::Read("a_path".to_string(), 50, 20));
 
         Ok(())
     }
@@ -593,32 +577,16 @@ mod test {
 
         let read_line1 = "pread(3, buf, 50, 100) = 50".to_string();
         let pread_op1 = parser.pread(read_line1.as_ref())?;
-        assert_eq!(pread_op1.kind, OperationType::Read);
-        assert!(pread_op1.offset.is_some());
-        assert_eq!(pread_op1.offset.expect("failed to extract the offset"), 100);
-        assert_eq!(
-            pread_op1.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(pread_op1.len.expect("failed to extract the size"), 50);
+        assert_eq!(pread_op1, Operation::Read("a_path".to_string(), 100, 50));
 
         let read_line2 = "pread(3, buf, 20, 500) = 20".to_string();
         let pread_op2 = parser.pread(read_line2.as_ref())?;
-        assert_eq!(pread_op2.kind, OperationType::Read);
-        assert_eq!(pread_op2.offset.expect("failed to extract the offset"), 500);
-        assert_eq!(
-            pread_op2.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(pread_op2.len.expect("failed to extract the size"), 20);
+        assert_eq!(pread_op2, Operation::Read("a_path".to_string(), 500, 20));
 
         // the previous pread ops should not update the opened file offset
         let read_line3 = "read(3, buf, 20) = 20".to_string();
         let read_op = parser.read(read_line3.as_ref())?;
-        assert_eq!(read_op.kind, OperationType::Read);
-        assert_eq!(read_op.offset.expect("failed to extract the offset"), 0);
-        assert_eq!(read_op.path.expect("failed to extract the path"), "a_path");
-        assert_eq!(read_op.len.expect("failed to extract the size"), 20);
+        assert_eq!(read_op, Operation::Read("a_path".to_string(), 0, 20));
 
         Ok(())
     }
@@ -628,77 +596,49 @@ mod test {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::Mknod);
-        assert_eq!(
-            operation.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(operation.len.expect("failed to extract the size"), 0);
-        assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
+        assert_eq!(operation, Operation::Mknod("a_path".to_string(), 0, 0));
 
         // first write
         let write_line1 = "write(5, some content here, 17) = 17".to_string();
         let write_op1 = parser.write(write_line1.as_ref())?;
         assert_eq!(
-            write_op1.kind,
-            OperationType::Write("some content here".to_string())
+            write_op1,
+            Operation::Write("a_path".to_string(), 0, 17, "some content here".to_string())
         );
-        assert_eq!(
-            write_op1.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(write_op1.len.expect("failed to extract the size"), 17);
-        assert_eq!(write_op1.offset.expect("failed to extract the offset"), 0);
 
         // second write
         let write_line2 = "write(5, hello, 5) = 5".to_string();
         let write_op2 = parser.write(write_line2.as_ref())?;
-        assert_eq!(write_op2.kind, OperationType::Write("hello".to_string()));
         assert_eq!(
-            write_op2.path.expect("failed to extract the path"),
-            "a_path"
+            write_op2,
+            Operation::Write("a_path".to_string(), 17, 5, "hello".to_string())
         );
-        assert_eq!(write_op2.len.expect("failed to extract the size"), 5);
-        assert_eq!(write_op2.offset.expect("failed to extract the offset"), 17);
 
         // open the file one more time to check the offset
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::Mknod);
         assert_eq!(
-            operation.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(operation.len.expect("failed to extract the size"), 17 + 5);
-        assert_eq!(
-            operation.offset.expect("failed to extract the offset"),
-            17 + 5
+            operation,
+            Operation::Mknod("a_path".to_string(), 17 + 5, 17 + 5)
         );
 
         // now open the file with truncate flag, which should zero the size and offset
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
         let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::Mknod);
-        assert_eq!(
-            operation.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(operation.len.expect("failed to extract the size"), 0);
-        assert_eq!(operation.offset.expect("failed to extract the offset"), 0);
+        assert_eq!(operation, Operation::Mknod("a_path".to_string(), 0, 0));
 
         // write after truncate
         let write_line2 = "write(5, some other content here, 10) = 10".to_string();
         let write_op2 = parser.write(write_line2.as_ref())?;
         assert_eq!(
-            write_op2.kind,
-            OperationType::Write("some other content here".to_string())
+            write_op2,
+            Operation::Write(
+                "a_path".to_string(),
+                0,
+                10,
+                "some other content here".to_string()
+            )
         );
-        assert_eq!(
-            write_op2.path.expect("failed to extract the path"),
-            "a_path"
-        );
-        assert_eq!(write_op2.len.expect("failed to extract the size"), 10);
-        assert_eq!(write_op2.offset.expect("failed to extract the offset"), 0);
 
         Ok(())
     }
@@ -708,8 +648,7 @@ mod test {
         let mut parser = Parser::new(PathBuf::new());
         let line = "getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
         let operation = parser.get_random(line.as_ref())?;
-        assert_eq!(operation.kind, OperationType::GetRandom);
-        assert_eq!(operation.len.expect("failed to extract size"), 16);
+        assert_eq!(operation, Operation::GetRandom(16));
 
         Ok(())
     }
@@ -722,11 +661,25 @@ mod test {
 
         let fstat_line = "fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
         let fstat_op = parser.fstat(fstat_line.as_ref())?;
-        assert_eq!(fstat_op.kind, OperationType::Stat);
+        assert_eq!(fstat_op, Operation::Stat("a_path".to_string()));
 
         assert_eq!(parser.files.len(), 1);
         let file_size = parser.files[0].size();
         assert_eq!(*file_size, 95921 as usize);
+
+        Ok(())
+    }
+
+    #[test]
+    fn mkdir() -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = Parser::new(PathBuf::new());
+
+        let mkdir_line = "mkdir(\"a_path\", 0777) = 0".to_string();
+        let mkdir_op = parser.mkdir(mkdir_line.as_ref())?;
+        assert_eq!(
+            mkdir_op,
+            Operation::Mkdir("a_path".to_string(), "0777".to_string())
+        );
 
         Ok(())
     }
