@@ -3,5 +3,5 @@ mod ops;
 mod parser;
 
 // re-export the required modules
-pub use ops::{Operation, OperationType};
+pub use ops::Operation;
 pub use parser::{FileDir, Parser};

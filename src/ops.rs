@@ -2,93 +2,68 @@ use std::fmt;
 use std::fmt::Formatter;
 
 #[derive(Debug, PartialEq)]
-pub enum OperationType {
-    Read,
-    Write(String), // the input string is the content of the write op
-    Mkdir(String), // the input string is the mode, e.g, 0777
-    Mknod,
-    OpenAt,
-    GetRandom,
-    Stat,
+pub enum Operation {
+    Read(String, i32, usize),          // args: path, offset, len
+    Write(String, i32, usize, String), // args: path, offset, len, content
+    Mkdir(String, String),             // args: path, mode
+    Mknod(String, i32, usize),         // args: path, offset, size
+    OpenAt(String, i32),               // args: path, offset
+    GetRandom(usize),                  // args: len
+    Stat(String),                      // args: path
     NoOp,
-}
-pub struct Operation {
-    pub kind: OperationType,
-    pub len: Option<usize>,
-    pub offset: Option<i32>,
-    pub path: Option<String>,
 }
 
 impl Operation {
-    fn new(
-        kind: OperationType,
-        len: Option<usize>,
-        offset: Option<i32>,
-        path: Option<String>,
-    ) -> Self {
-        Operation {
-            kind,
-            len,
-            offset,
-            path,
-        }
-    }
-
-    pub fn read(size: usize, offset: i32, path: String) -> Self {
-        Operation::new(OperationType::Read, Some(size), Some(offset), Some(path))
+    pub fn read(len: usize, offset: i32, path: String) -> Self {
+        Operation::Read(path, offset, len)
     }
 
     pub fn no_op() -> Self {
-        Operation::new(OperationType::NoOp, None, None, None)
+        Operation::NoOp
     }
 
-    pub fn mkdir(mode: String, path: String) -> Self {
-        Operation::new(OperationType::Mkdir(mode), None, None, Some(path))
+    pub fn mkdir(path: String, mode: String) -> Self {
+        Operation::Mkdir(path, mode)
     }
 
     pub fn mknod(size: usize, offset: i32, path: String) -> Self {
-        Operation::new(OperationType::Mknod, Some(size), Some(offset), Some(path))
+        Operation::Mknod(path, offset, size)
     }
 
     pub fn open_at(offset: i32, path: String) -> Self {
-        Operation::new(OperationType::OpenAt, None, Some(offset), Some(path))
+        Operation::OpenAt(path, offset)
     }
 
-    pub fn write(content: String, size: usize, offset: i32, path: String) -> Self {
-        Operation::new(
-            OperationType::Write(content),
-            Some(size),
-            Some(offset),
-            Some(path),
-        )
+    pub fn write(content: String, len: usize, offset: i32, path: String) -> Self {
+        Operation::Write(path, offset, len, content)
     }
 
-    pub fn get_random(size: usize) -> Self {
-        Operation::new(OperationType::GetRandom, Some(size), None, None)
+    pub fn get_random(len: usize) -> Self {
+        Operation::GetRandom(len)
     }
 
     pub fn stat(path: String) -> Self {
-        Operation::new(OperationType::Stat, None, None, Some(path))
+        Operation::Stat(path)
     }
 }
 
 impl fmt::Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let path = self.path.clone().unwrap_or("".to_string());
-        let offset = self.offset.unwrap_or(0);
-        let len = self.len.unwrap_or(0);
-
-        match &self.kind {
-            &OperationType::Mkdir(ref mode) => write!(f, "mkdir({}, {})", path, mode),
-            &OperationType::Mknod => write!(f, "mknod({}, {}, {})", path, offset, len),
-            &OperationType::Read => write!(f, "read({}, {}, {})", path, offset, len),
-            &OperationType::Write(ref content) => {
-                write!(f, "write({}, {}, {}, {})", path, content, offset, len)
+        match &self {
+            &Operation::Mkdir(ref path, ref mode) => write!(f, "mkdir({}, {})", path, mode),
+            &Operation::Mknod(ref path, ref offset, ref size) => {
+                write!(f, "mknod({}, {}, {})", path, offset, size)
             }
-            &OperationType::OpenAt => write!(f, "open({}, {})", path, offset),
-            &OperationType::GetRandom => write!(f, "get_random({})", len),
-            &OperationType::Stat => write!(f, "stat({})", path),
-            &OperationType::NoOp => write!(f, "no-op"),
+            &Operation::Read(ref path, ref offset, ref len) => {
+                write!(f, "mknod({}, {}, {})", path, offset, len)
+            }
+            &Operation::Write(ref path, ref offset, ref len, ref content) => {
+                write!(f, "write({}, {}, {}, {})", path, offset, len, content)
+            }
+            &Operation::OpenAt(ref path, ref offset) => write!(f, "open({}, {})", path, offset),
+            &Operation::GetRandom(ref len) => write!(f, "get_random({})", len),
+            &Operation::Stat(ref path) => write!(f, "stat({})", path),
+            &Operation::NoOp => write!(f, "no-op"),
         }
     }
 }
