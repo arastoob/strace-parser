@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use clap::Parser as ClapParser;
+use std::path::PathBuf;
 use strace_parser::Parser;
 
 /// A library for parsing the strace output log
@@ -17,8 +17,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut parser = Parser::new(args.log_path);
     let operations = parser.parse()?;
 
+    println!("operations:");
     for operation in operations {
         println!("{}", operation);
+    }
+
+    println!("\naccessed files:");
+    let accessed_files = parser.accessed_files()?;
+    for file_dir in accessed_files {
+        println!("{}", file_dir);
     }
 
     Ok(())
