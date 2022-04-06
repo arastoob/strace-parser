@@ -10,7 +10,7 @@ pub enum OperationType {
     OpenAt,
     GetRandom,
     Stat,
-    NoOp
+    NoOp,
 }
 pub struct Operation {
     pub kind: OperationType,
@@ -20,7 +20,12 @@ pub struct Operation {
 }
 
 impl Operation {
-    fn new(kind: OperationType, len: Option<usize>, offset: Option<i32>, path: Option<String>) -> Self {
+    fn new(
+        kind: OperationType,
+        len: Option<usize>,
+        offset: Option<i32>,
+        path: Option<String>,
+    ) -> Self {
         Operation {
             kind,
             len,
@@ -50,7 +55,12 @@ impl Operation {
     }
 
     pub fn write(content: String, size: usize, offset: i32, path: String) -> Self {
-        Operation::new(OperationType::Write(content), Some(size), Some(offset), Some(path))
+        Operation::new(
+            OperationType::Write(content),
+            Some(size),
+            Some(offset),
+            Some(path),
+        )
     }
 
     pub fn get_random(size: usize) -> Self {
@@ -72,7 +82,9 @@ impl fmt::Display for Operation {
             &OperationType::Mkdir(ref mode) => write!(f, "mkdir({}, {})", path, mode),
             &OperationType::Mknod => write!(f, "mknod({}, {}, {})", path, offset, len),
             &OperationType::Read => write!(f, "read({}, {}, {})", path, offset, len),
-            &OperationType::Write(ref content) => write!(f, "write({}, {}, {}, {})", path, content, offset, len),
+            &OperationType::Write(ref content) => {
+                write!(f, "write({}, {}, {}, {})", path, content, offset, len)
+            }
             &OperationType::OpenAt => write!(f, "open({}, {})", path, offset),
             &OperationType::GetRandom => write!(f, "get_random({})", len),
             &OperationType::Stat => write!(f, "stat({})", path),

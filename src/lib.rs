@@ -1,7 +1,7 @@
 mod error;
-mod parser;
 mod ops;
+mod parser;
 
 // re-export the required modules
-pub use parser::Parser;
 pub use ops::{Operation, OperationType};
+pub use parser::{FileDir, Parser};
