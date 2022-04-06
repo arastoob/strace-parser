@@ -1,6 +1,6 @@
 use crate::error::Error;
 use crate::ops::Operation;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
@@ -9,10 +9,10 @@ use std::path::PathBuf;
 pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<i32, OpenedFile>,
-    files: Vec<FileDir>, // keep existing files' size
+    files: HashSet<FileDir>, // keep existing files' size
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, Hash, PartialEq)]
 pub enum FileDir {
     File(String, usize), // file path and size
     Dir(String, usize),  // directory path and size
@@ -61,7 +61,7 @@ impl Parser {
         Parser {
             log_file,
             fd_map: HashMap::new(),
-            files: vec![],
+            files: HashSet::new(),
         }
     }
 
@@ -253,7 +253,7 @@ impl Parser {
         let path = self.path(&args, "stat")?;
 
         let file_dir = self.file_dir(&args, &path, "stat")?;
-        self.files.push(file_dir);
+        self.files.insert(file_dir);
 
         Ok(Operation::stat(path))
     }
@@ -279,7 +279,7 @@ impl Parser {
                 let path = opend_file.path.clone();
 
                 let file_dir = self.file_dir(&args, &path, "fstat")?;
-                self.files.push(file_dir);
+                self.files.insert(file_dir);
 
                 Ok(Operation::stat(path))
             }
@@ -322,7 +322,7 @@ impl Parser {
         };
 
         let file_dir = self.file_dir(&args, &path, "statx")?;
-        self.files.push(file_dir);
+        self.files.insert(file_dir);
 
         Ok(Operation::stat(path))
     }
@@ -523,7 +523,7 @@ impl Parser {
         }
     }
 
-    pub fn accessed_files(&self) -> Result<Vec<FileDir>, Box<dyn std::error::Error>> {
+    pub fn accessed_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
         Ok(self.files.clone())
     }
 }
@@ -664,7 +664,12 @@ mod test {
         assert_eq!(fstat_op, Operation::Stat("a_path".to_string()));
 
         assert_eq!(parser.files.len(), 1);
-        let file_size = parser.files[0].size();
+        let file_size = parser
+            .files
+            .iter()
+            .next()
+            .expect("failed to get the first element from hashset")
+            .size();
         assert_eq!(*file_size, 95921 as usize);
 
         Ok(())
