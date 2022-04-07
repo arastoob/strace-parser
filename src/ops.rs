@@ -7,9 +7,15 @@ pub enum Operation {
     Write(String, i32, usize, String), // args: path, offset, len, content
     Mkdir(String, String),             // args: path, mode
     Mknod(String, i32, usize),         // args: path, offset, size
+    Remove(String),                    // args: path
+    Rename(String, String),            // args: old_path, new_path
     OpenAt(String, i32),               // args: path, offset
     GetRandom(usize),                  // args: len
     Stat(String),                      // args: path
+    Fstat(String),                     // args: path
+    Statx(String),                     // args: path
+    StatFS(String),                    // args: path
+    Fstatat(String),                   // args: path
     NoOp,
 }
 
@@ -30,6 +36,10 @@ impl Operation {
         Operation::Mknod(path, offset, size)
     }
 
+    pub fn remove(path: String) -> Self {
+        Operation::Remove(path)
+    }
+
     pub fn open_at(offset: i32, path: String) -> Self {
         Operation::OpenAt(path, offset)
     }
@@ -45,6 +55,26 @@ impl Operation {
     pub fn stat(path: String) -> Self {
         Operation::Stat(path)
     }
+
+    pub fn fstat(path: String) -> Self {
+        Operation::Fstat(path)
+    }
+
+    pub fn statx(path: String) -> Self {
+        Operation::Statx(path)
+    }
+
+    pub fn statfs(path: String) -> Self {
+        Operation::StatFS(path)
+    }
+
+    pub fn fstatat(path: String) -> Self {
+        Operation::Fstatat(path)
+    }
+
+    pub fn rename(old_path: String, new_path: String) -> Self {
+        Operation::Rename(old_path, new_path)
+    }
 }
 
 impl fmt::Display for Operation {
@@ -54,6 +84,7 @@ impl fmt::Display for Operation {
             &Operation::Mknod(ref path, ref offset, ref size) => {
                 write!(f, "mknod({}, {}, {})", path, offset, size)
             }
+            &Operation::Remove(ref path) => write!(f, "remove({})", path),
             &Operation::Read(ref path, ref offset, ref len) => {
                 write!(f, "mknod({}, {}, {})", path, offset, len)
             }
@@ -63,6 +94,13 @@ impl fmt::Display for Operation {
             &Operation::OpenAt(ref path, ref offset) => write!(f, "open({}, {})", path, offset),
             &Operation::GetRandom(ref len) => write!(f, "get_random({})", len),
             &Operation::Stat(ref path) => write!(f, "stat({})", path),
+            &Operation::Fstat(ref path) => write!(f, "fstat({})", path),
+            &Operation::Statx(ref path) => write!(f, "statx({})", path),
+            &Operation::StatFS(ref path) => write!(f, "statfs({})", path),
+            &Operation::Fstatat(ref path) => write!(f, "fstatat({})", path),
+            &Operation::Rename(ref old_path, ref new_path) => {
+                write!(f, "rename({} {})", old_path, new_path)
+            }
             &Operation::NoOp => write!(f, "no-op"),
         }
     }
