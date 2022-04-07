@@ -114,10 +114,9 @@ impl Parser {
                 operations.push(self.statfs(line.as_ref())?);
             }
 
-            if line.starts_with("fstatat64(") ||
-                line.starts_with("newfstatat(") ||
-                line.starts_with("fstatat(")
-
+            if line.starts_with("fstatat64(")
+                || line.starts_with("newfstatat(")
+                || line.starts_with("fstatat(")
             {
                 operations.push(self.fstatat(line.as_ref())?);
             }
@@ -137,6 +136,18 @@ impl Parser {
 
             if line.starts_with("mkdir(") {
                 operations.push(self.mkdir(line.as_ref())?);
+            }
+
+            if line.starts_with("unlinkat(") || line.starts_with("unlink(") {
+                operations.push(self.unlink(line.as_ref())?);
+            }
+
+            if line.starts_with("rename(") {
+                operations.push(self.rename(line.as_ref())?);
+            }
+
+            if line.starts_with("renameat(") || line.starts_with("renameat2(") {
+                operations.push(self.renameat(line.as_ref())?);
             }
         }
 
@@ -161,7 +172,6 @@ impl Parser {
         // described by the file descriptor.
         //
 
-
         // the returned file descriptor is after '='
         let fd = line
             .split_at(
@@ -179,12 +189,21 @@ impl Parser {
         let mut path = self.path(&args, "openat")?;
 
         // extract the dirfd
-        let dirfd = args.split_at(args.find(",").ok_or(Error::NotFound(", from openat line".to_string()))?).0;
+        let dirfd = args
+            .split_at(
+                args.find(",")
+                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
+            )
+            .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
             let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self.fd_map.get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?.path.clone();
+            let dirfd_path = self
+                .fd_map
+                .get(&dirfd)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
+                .path
+                .clone();
             // create the absolute path
             path = format!("{}{}", dirfd_path, path);
         }
@@ -248,7 +267,6 @@ impl Parser {
         //  This means a file that was previously referred by fd, now is referred by the
         //  return value of fcntl.
 
-
         // the returned file descriptor is after '='
         let dup_fd = line
             .split_at(
@@ -264,10 +282,14 @@ impl Parser {
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
 
-        if parts.iter()
-            .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC")).is_some() {
-
-            let fd_of = self.fd_map.get(&fd)
+        if parts
+            .iter()
+            .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC"))
+            .is_some()
+        {
+            let fd_of = self
+                .fd_map
+                .get(&fd)
                 .ok_or(Error::NotFound(format!("file descriptor {}", fd)))?;
             let fd_path = fd_of.path.clone();
             let offset = fd_of.offset;
@@ -390,12 +412,21 @@ impl Parser {
         let mut path = self.path(&args, "statx")?;
 
         // extract the dirfd
-        let dirfd = args.split_at(args.find(",").ok_or(Error::NotFound(", from openat line".to_string()))?).0;
+        let dirfd = args
+            .split_at(
+                args.find(",")
+                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
+            )
+            .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
             let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self.fd_map.get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?.path.clone();
+            let dirfd_path = self
+                .fd_map
+                .get(&dirfd)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
+                .path
+                .clone();
             // create the absolute path
             path = format!("{}{}", dirfd_path, path);
         }
@@ -428,12 +459,21 @@ impl Parser {
         let mut path = self.path(&args, "fstatat")?;
 
         // extract the dirfd
-        let dirfd = args.split_at(args.find(",").ok_or(Error::NotFound(", from openat line".to_string()))?).0;
+        let dirfd = args
+            .split_at(
+                args.find(",")
+                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
+            )
+            .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
             let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self.fd_map.get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?.path.clone();
+            let dirfd_path = self
+                .fd_map
+                .get(&dirfd)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
+                .path
+                .clone();
             // create the absolute path
             path = format!("{}{}", dirfd_path, path);
         }
@@ -549,6 +589,122 @@ impl Parser {
             .trim();
 
         Ok(Operation::mkdir(path, mode.to_string()))
+    }
+
+    // parse a unlink line
+    fn unlink(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a unlink line of the strace log is like one of the followings:
+        //      unlinkat(dirfd, "", AT_REMOVEDIR) = 0
+        // or
+        //      fstatat(dirfd, "a-path", {st_mode=S_IFDIR|0775, st_size=4096, ...}, flags) = 0
+        //
+        // If the path is absolute, then dirfd is ignored.
+        // If dirfd is 'AT_FDCWD', the path is interpreted relative to the current working directory
+        // of the calling process.
+        // If dirfd is a file descriptor, then the path is relative to the path of the directory
+        // described by the file descriptor.
+        //
+
+        // extract the input arguments
+        let args = self.args(line, "unlink")?;
+
+        // extract the path from input arguments
+        let mut path = self.path(&args, "unlink")?;
+
+        // extract the dirfd
+        let dirfd = args
+            .split_at(
+                args.find(",")
+                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
+            )
+            .0;
+        if !dirfd.contains("AT_FDCWD") {
+            // dirfd should be a valid file descriptor, so the input path is a relative path.
+            let dirfd = dirfd.trim().parse::<i32>()?;
+            let dirfd_path = self
+                .fd_map
+                .get(&dirfd)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
+                .path
+                .clone();
+            // create the absolute path
+            path = format!("{}{}", dirfd_path, path);
+        }
+
+        Ok(Operation::remove(path))
+    }
+
+    // parse a rename line
+    fn rename(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a rename line of the strace log is like one of the followings:
+        //      rename("old-path", "new-path") = 0
+        //
+
+        // extract the input arguments
+        let args = self.args(line, "rename")?;
+
+        let (old, new) = args.split_at(
+            args.find(",")
+                .ok_or(Error::NotFound("= from rename line".to_string()))?,
+        );
+
+        let old = self.path(&old, "rename")?;
+        let new = self.path(&new, "rename")?;
+
+        Ok(Operation::rename(old, new))
+    }
+
+    // parse a renameat line
+    fn renameat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+        // a renameat line of the strace log is like one of the followings:
+        //      renameat2(dirfd, "o-path", dirfd, "n-path", RENAME_NOREPLACE) = 0
+        //
+        // If the path is absolute, then dirfd is ignored.
+        // If dirfd is 'AT_FDCWD', the path is interpreted relative to the current working directory
+        // of the calling process.
+        // If dirfd is a file descriptor, then the path is relative to the path of the directory
+        // described by the file descriptor.
+        //
+
+        // extract the input arguments
+        let args = self.args(line, "rename")?;
+
+        let parts: Vec<&str> = args.split(",").collect();
+        let dirfd1 = parts[0];
+        let old = parts[1];
+        let mut old = self.path(&old, "renameat")?;
+
+        let dirfd2 = parts[2];
+        let new = parts[3];
+        let mut new = self.path(&new, "renameat")?;
+
+        if !dirfd1.contains("AT_FDCWD") {
+            // dirfd should be a valid file descriptor, so the input path is a relative path.
+            let dirfd1 = dirfd1.trim().parse::<i32>()?;
+            let dirfd1_path = self
+                .fd_map
+                .get(&dirfd1)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd1)))?
+                .path
+                .clone();
+            // create the absolute path
+            old = format!("{}{}", dirfd1_path, old);
+        }
+
+        if !dirfd2.contains("AT_FDCWD") {
+            // dirfd should be a valid file descriptor, so the input path is a relative path.
+            let dirfd2 = dirfd2.trim().parse::<i32>()?;
+            let dirfd2_path = self
+                .fd_map
+                .get(&dirfd2)
+                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd2)))?
+                .path
+                .clone();
+            // create the absolute path
+            new = format!("{}{}", dirfd2_path, new);
+        }
+
+        Ok(Operation::rename(old, new))
     }
 
     // parse a getrandom line
@@ -797,7 +953,7 @@ mod test {
 
         let fstat_line = "fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
         let fstat_op = parser.fstat(fstat_line.as_ref())?;
-        assert_eq!(fstat_op, Operation::Stat("a_path".to_string()));
+        assert_eq!(fstat_op, Operation::Fstat("a_path".to_string()));
 
         assert_eq!(parser.files.len(), 1);
         let file_size = parser
@@ -820,6 +976,34 @@ mod test {
         assert_eq!(
             mkdir_op,
             Operation::Mkdir("a_path".to_string(), "0777".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn rename() -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = Parser::new(PathBuf::new());
+        let line = "rename(\"old_path\", \"new_path\") = 0".to_string();
+        let operation = parser.rename(line.as_ref())?;
+        assert_eq!(
+            operation,
+            Operation::Rename("old_path".to_string(), "new_path".to_string())
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn renameat() -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = Parser::new(PathBuf::new());
+        let line =
+            "renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0"
+                .to_string();
+        let operation = parser.renameat(line.as_ref())?;
+        assert_eq!(
+            operation,
+            Operation::Rename("old_path".to_string(), "new_path".to_string())
         );
 
         Ok(())
