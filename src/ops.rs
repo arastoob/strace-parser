@@ -10,6 +10,10 @@ pub enum Operation {
     OpenAt(String, i32),               // args: path, offset
     GetRandom(usize),                  // args: len
     Stat(String),                      // args: path
+    Fstat(String),                     // args: path
+    Statx(String),                     // args: path
+    StatFS(String),                    // args: path
+    Fstatat(String),                   // args: path
     NoOp,
 }
 
@@ -45,6 +49,22 @@ impl Operation {
     pub fn stat(path: String) -> Self {
         Operation::Stat(path)
     }
+
+    pub fn fstat(path: String) -> Self {
+        Operation::Fstat(path)
+    }
+
+    pub fn statx(path: String) -> Self {
+        Operation::Statx(path)
+    }
+
+    pub fn statfs(path: String) -> Self {
+        Operation::StatFS(path)
+    }
+
+    pub fn fstatat(path: String) -> Self {
+        Operation::Fstatat(path)
+    }
 }
 
 impl fmt::Display for Operation {
@@ -63,6 +83,10 @@ impl fmt::Display for Operation {
             &Operation::OpenAt(ref path, ref offset) => write!(f, "open({}, {})", path, offset),
             &Operation::GetRandom(ref len) => write!(f, "get_random({})", len),
             &Operation::Stat(ref path) => write!(f, "stat({})", path),
+            &Operation::Fstat(ref path) => write!(f, "fstat({})", path),
+            &Operation::Statx(ref path) => write!(f, "statx({})", path),
+            &Operation::StatFS(ref path) => write!(f, "statfs({})", path),
+            &Operation::Fstatat(ref path) => write!(f, "fstatat({})", path),
             &Operation::NoOp => write!(f, "no-op"),
         }
     }
