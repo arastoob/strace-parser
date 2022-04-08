@@ -719,7 +719,11 @@ impl Parser {
             .to_string())
     }
 
-    fn relative_to_absolute(&self, dirfd: &str, relative: &str) -> Result<String, Box<dyn std::error::Error>> {
+    fn relative_to_absolute(
+        &self,
+        dirfd: &str,
+        relative: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         // dirfd should be a valid file descriptor
         let dirfd = dirfd.trim().parse::<i32>()?;
         let dirfd_path = self
