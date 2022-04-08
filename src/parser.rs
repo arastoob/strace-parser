@@ -188,16 +188,18 @@ impl Parser {
         // extract the path from input arguments
         let mut path = self.path(&args, "openat")?;
 
-        // extract the dirfd
-        let dirfd = args
-            .split_at(
-                args.find(",")
-                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
-            )
-            .0;
-        if !dirfd.contains("AT_FDCWD") {
-            // dirfd should be a valid file descriptor, so the input path is a relative path.
-            path = self.relative_to_absolute(dirfd, &path)?;
+        if !PathBuf::from(path.clone()).is_absolute() {
+            // extract the dirfd
+            let dirfd = args
+                .split_at(
+                    args.find(",")
+                        .ok_or(Error::NotFound(", from openat line".to_string()))?,
+                )
+                .0;
+            if !dirfd.contains("AT_FDCWD") {
+                // dirfd should be a valid file descriptor, so the input path is a relative path.
+                path = self.relative_to_absolute(dirfd, &path)?;
+            }
         }
 
         let flags_mode = args
@@ -403,17 +405,20 @@ impl Parser {
         // extract the path from input arguments
         let mut path = self.path(&args, "statx")?;
 
-        // extract the dirfd
-        let dirfd = args
-            .split_at(
-                args.find(",")
-                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
-            )
-            .0;
-        if !dirfd.contains("AT_FDCWD") {
-            // dirfd should be a valid file descriptor, so the input path is a relative path.
-            path = self.relative_to_absolute(dirfd, &path)?;
+        if !PathBuf::from(path.clone()).is_absolute() {
+            // extract the dirfd
+            let dirfd = args
+                .split_at(
+                    args.find(",")
+                        .ok_or(Error::NotFound(", from openat line".to_string()))?,
+                )
+                .0;
+            if !dirfd.contains("AT_FDCWD") {
+                // dirfd should be a valid file descriptor, so the input path is a relative path.
+                path = self.relative_to_absolute(dirfd, &path)?;
+            }
         }
+
 
         let file_dir = self.file_dir(&args, &path, "statx")?;
         self.files.insert(file_dir);
@@ -442,16 +447,18 @@ impl Parser {
         // extract the path from input arguments
         let mut path = self.path(&args, "fstatat")?;
 
-        // extract the dirfd
-        let dirfd = args
-            .split_at(
-                args.find(",")
-                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
-            )
-            .0;
-        if !dirfd.contains("AT_FDCWD") {
-            // dirfd should be a valid file descriptor, so the input path is a relative path.
-            path = self.relative_to_absolute(dirfd, &path)?;
+        if !PathBuf::from(path.clone()).is_absolute() {
+            // extract the dirfd
+            let dirfd = args
+                .split_at(
+                    args.find(",")
+                        .ok_or(Error::NotFound(", from openat line".to_string()))?,
+                )
+                .0;
+            if !dirfd.contains("AT_FDCWD") {
+                // dirfd should be a valid file descriptor, so the input path is a relative path.
+                path = self.relative_to_absolute(dirfd, &path)?;
+            }
         }
 
         let file_dir = self.file_dir(&args, &path, "fstatat")?;
@@ -587,16 +594,18 @@ impl Parser {
         // extract the path from input arguments
         let mut path = self.path(&args, "unlink")?;
 
-        // extract the dirfd
-        let dirfd = args
-            .split_at(
-                args.find(",")
-                    .ok_or(Error::NotFound(", from openat line".to_string()))?,
-            )
-            .0;
-        if !dirfd.contains("AT_FDCWD") {
-            // dirfd should be a valid file descriptor, so the input path is a relative path.
-            path = self.relative_to_absolute(dirfd, &path)?;
+        if !PathBuf::from(path.clone()).is_absolute() {
+            // extract the dirfd
+            let dirfd = args
+                .split_at(
+                    args.find(",")
+                        .ok_or(Error::NotFound(", from openat line".to_string()))?,
+                )
+                .0;
+            if !dirfd.contains("AT_FDCWD") {
+                // dirfd should be a valid file descriptor, so the input path is a relative path.
+                path = self.relative_to_absolute(dirfd, &path)?;
+            }
         }
 
         Ok(Operation::remove(path))
@@ -646,12 +655,12 @@ impl Parser {
         let new = parts[3];
         let mut new = self.path(&new, "renameat")?;
 
-        if !dirfd1.contains("AT_FDCWD") {
+        if !PathBuf::from(old.clone()).is_absolute() && !dirfd1.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
             old = self.relative_to_absolute(dirfd1, &old)?;
         }
 
-        if !dirfd2.contains("AT_FDCWD") {
+        if !PathBuf::from(new.clone()).is_absolute() && !dirfd2.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
             new = self.relative_to_absolute(dirfd2, &new)?;
         }
