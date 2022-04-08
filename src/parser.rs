@@ -197,15 +197,7 @@ impl Parser {
             .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self
-                .fd_map
-                .get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
-                .path
-                .clone();
-            // create the absolute path
-            path = format!("{}{}", dirfd_path, path);
+            path = self.relative_to_absolute(dirfd, &path)?;
         }
 
         let flags_mode = args
@@ -420,15 +412,7 @@ impl Parser {
             .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self
-                .fd_map
-                .get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
-                .path
-                .clone();
-            // create the absolute path
-            path = format!("{}{}", dirfd_path, path);
+            path = self.relative_to_absolute(dirfd, &path)?;
         }
 
         let file_dir = self.file_dir(&args, &path, "statx")?;
@@ -467,15 +451,7 @@ impl Parser {
             .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self
-                .fd_map
-                .get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
-                .path
-                .clone();
-            // create the absolute path
-            path = format!("{}{}", dirfd_path, path);
+            path = self.relative_to_absolute(dirfd, &path)?;
         }
 
         let file_dir = self.file_dir(&args, &path, "fstatat")?;
@@ -620,15 +596,7 @@ impl Parser {
             .0;
         if !dirfd.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd = dirfd.trim().parse::<i32>()?;
-            let dirfd_path = self
-                .fd_map
-                .get(&dirfd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
-                .path
-                .clone();
-            // create the absolute path
-            path = format!("{}{}", dirfd_path, path);
+            path = self.relative_to_absolute(dirfd, &path)?;
         }
 
         Ok(Operation::remove(path))
@@ -680,28 +648,12 @@ impl Parser {
 
         if !dirfd1.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd1 = dirfd1.trim().parse::<i32>()?;
-            let dirfd1_path = self
-                .fd_map
-                .get(&dirfd1)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd1)))?
-                .path
-                .clone();
-            // create the absolute path
-            old = format!("{}{}", dirfd1_path, old);
+            old = self.relative_to_absolute(dirfd1, &old)?;
         }
 
         if !dirfd2.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            let dirfd2 = dirfd2.trim().parse::<i32>()?;
-            let dirfd2_path = self
-                .fd_map
-                .get(&dirfd2)
-                .ok_or(Error::NotFound(format!("file descriptor {}", dirfd2)))?
-                .path
-                .clone();
-            // create the absolute path
-            new = format!("{}{}", dirfd2_path, new);
+            new = self.relative_to_absolute(dirfd2, &new)?;
         }
 
         Ok(Operation::rename(old, new))
@@ -765,6 +717,19 @@ impl Parser {
             )
             .0
             .to_string())
+    }
+
+    fn relative_to_absolute(&self, dirfd: &str, relative: &str) -> Result<String, Box<dyn std::error::Error>> {
+        // dirfd should be a valid file descriptor
+        let dirfd = dirfd.trim().parse::<i32>()?;
+        let dirfd_path = self
+            .fd_map
+            .get(&dirfd)
+            .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
+            .path
+            .clone();
+        // create the absolute path
+        Ok(format!("{}{}", dirfd_path, relative))
     }
 
     fn file_dir(
