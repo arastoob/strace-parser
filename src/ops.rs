@@ -76,6 +76,25 @@ impl Operation {
         Operation::Rename(old_path, new_path)
     }
 
+    pub fn path(&self) -> &str {
+        match self {
+            Operation::Mkdir(path, _) => path,
+            Operation::Mknod(path, _, _) => path,
+            Operation::Remove(path) => path,
+            Operation::Read(path, _, _) => path,
+            Operation::Write(path, _, _, _) => path,
+            Operation::OpenAt(path, _) => path,
+            Operation::Stat(path) => path,
+            Operation::Fstat(path) => path,
+            Operation::Statx(path) => path,
+            Operation::StatFS(path) => path,
+            Operation::Fstatat(path) => path,
+            Operation::Rename(path, _) => path,
+            Operation::GetRandom(_) => "",
+            Operation::NoOp => "",
+        }
+    }
+
     pub fn update_path(&mut self, new_path: &str) {
         match self {
             Operation::Mkdir(path, _) => {
@@ -157,10 +176,7 @@ mod test {
         let mut op = Operation::mkdir("a_path".to_string(), "0666".to_string());
         op.update_path("b_path");
 
-        assert_eq!(
-            op,
-            Operation::mkdir("b_path".to_string(), "0666".to_string())
-        );
+        assert_eq!(op.path(), "b_path");
 
         Ok(())
     }
