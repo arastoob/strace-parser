@@ -162,10 +162,7 @@ impl Parser {
     // parse an openat line
     fn openat(&mut self, line: &str) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
         //
-        // an openat line of the strace log is like:
-        //   1.   openat(dirfd, "a-path", flags, mode) = 3
-        // or
-        //   2.   openat(dirfd, "a-path", flags) = 3
+        // int openat(int dirfd, const char *path, int flags, mode_t mode);
         //
         // If the path is absolute, then dirfd is ignored.
         // If dirfd = 'AT_FDCWD', the path is interpreted relative to the current working directory
@@ -273,7 +270,10 @@ impl Parser {
 
     // parse a fcntl line
     fn fcntl(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a fcntl line of the strace log is like:
+        // int fcntl(int fd, int cmd, ... /* arg */ );
+        // performs one of the operations on the open file descriptor fd.  The operation is determined by cmd.
+        //
+        // Example:
         //      fcntl(fd, F_DUPFD, FD_CLOEXEC) = 4
         //  or
         //      fcntl(fd, F_DUPFD, FD_CLOEXEC, args) = 4
@@ -323,10 +323,12 @@ impl Parser {
 
     // parse a read line
     fn read(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a read line of the strace log is like:
+        // ssize_t read(int fd, void *buf, size_t count);
+        // attempts to read up to count bytes from file descriptor fd into the buffer starting at buf.
+        //
+        // Example:
         //      read(fd, "a-buf", len) = read_len
         //
-        // this operation reads len bytes from opened file offset and changes the opened file offset after read
 
         // extract the input arguments
         let args = self.args(line, "read")?;
@@ -360,7 +362,10 @@ impl Parser {
 
     // parse a stat line
     fn stat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a stat line of the strace log is like:
+        // int stat(const char *pathname, struct stat *statbuf);
+        // display file or file system status.
+        //
+        // Example:
         //      stat("a-path", {st_mode=S_IFREG|0664, st_size=62, ...}) = 0
         //
         // the file information such as st_size is available between {}
@@ -379,7 +384,10 @@ impl Parser {
 
     // parse a fstat line
     fn fstat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a fstat line of the strace log is like:
+        // int fstat(int fd, struct stat *statbuf);
+        // return information about a file, in the buffer pointed to by statbuf
+        //
+        // Example:
         //      fstat(fd, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0
         //
         // the file information such as st_size is available between {}
@@ -408,7 +416,11 @@ impl Parser {
 
     // parse a statx line
     fn statx(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a statx line of the strace log is like one of the followings:
+        // int statx(int dirfd, const char *pathname, int flags,
+        //                  unsigned int mask, struct statx *statxbuf);
+        //  returns information about a file, storing it in the buffer pointed to by statxbuf.
+        //
+        // Example:
         //      statx(dirfd, "", AT_STATX_SYNC_AS_STAT|AT_EMPTY_PATH, STATX_ALL, {stx_mask=STATX_ALL|0x1000, stx_attributes=0, stx_mode=S_IFREG|0644, stx_size=1335, ...}) = 0
         // or
         //      statx(dirfd, "a-path", AT_STATX_SYNC_AS_STAT, STATX_ALL, {stx_mask=STATX_ALL|0x1000, stx_attributes=0, stx_mode=S_IFREG|0644, stx_size=19153, ...}) = 0
@@ -449,7 +461,11 @@ impl Parser {
 
     // parse a fstatat line
     fn fstatat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a fstatat line of the strace log is like one of the followings:
+        // int fstatat(int dirfd, const char *pathname, struct stat *statbuf,
+        //                    int flags);
+        //  return information about a file, in the buffer pointed to by statbuf
+        //
+        // Example:
         //      fstatat(dirfd, "", {st_mode=S_IFDIR|0775, st_size=4096, ...}, flags) = 0
         // or
         //      fstatat(dirfd, "a-path", {st_mode=S_IFDIR|0775, st_size=4096, ...}, flags) = 0
@@ -490,7 +506,10 @@ impl Parser {
 
     // parse a statfs line
     fn statfs(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a statfs line of the strace log is like:
+        // int statfs(const char *path, struct statfs *buf);
+        // returns information about a mounted filesystem
+        //
+        // Example:
         //  statfs("a-path", {f_type=EXT2_SUPER_MAGIC, f_bsize=4096,
         //   f_blocks=114116168, f_bfree=60978756, f_bavail=55164536, f_files=29057024,
         //   f_ffree=27734180, f_fsid={val=[991782359, 1280028847]}, f_namelen=255, f_frsize=4096,
@@ -509,7 +528,11 @@ impl Parser {
 
     // parse a read line
     fn pread(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a pread (or pread64) line of the strace log is like:
+        // ssize_t pread(int fd, void *buf, size_t count, off_t offset);
+        // reads  up  to  count  bytes from file descriptor fd at offset offset
+        // (from the start of the file) into the buffer starting at buf.  The file offset is not changed.
+        //
+        // Example:
         //  pread(fd, "a-buf", len, offset) = len
         //
         // the operation reads len bytes from input offset and does not change the opened file offset after read
@@ -537,7 +560,11 @@ impl Parser {
 
     // parse a write line
     fn write(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a write line of the strace log is like:
+        // ssize_t write(int fd, const void *buf, size_t count);
+        // writes up to count bytes from the buffer starting at buf to the file referred to
+        // by the file descriptor fd.
+        //
+        // Example:
         //  write(fd, "a-string", len) = write_len
 
         // extract the input arguments
@@ -578,7 +605,10 @@ impl Parser {
 
     // parse a write line
     fn mkdir(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a mkdir line of the strace log is like:
+        // int mkdir(const char *pathname, mode_t mode);
+        // attempts to create a directory named pathname.
+        //
+        // Example:
         //  mkdir("a-path", mode) = 0
 
         // extract the input arguments
@@ -597,10 +627,15 @@ impl Parser {
 
     // parse a unlink line
     fn unlink(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a unlink line of the strace log is like one of the followings:
+        // int unlinkat(int dirfd, const char *pathname, int flags);
+        // deletes a name from the filesystem.  If that name was the last link to a file and no
+        // processes have the file open, the file is deleted and the space it was using is made
+        // available for reuse.
+        //
+        // Example:
         //      unlinkat(dirfd, "", AT_REMOVEDIR) = 0
         // or
-        //      fstatat(dirfd, "a-path", {st_mode=S_IFDIR|0775, st_size=4096, ...}, flags) = 0
+        //      unlinkat(dirfd, "a-path", {st_mode=S_IFDIR|0775, st_size=4096, ...}, flags) = 0
         //
         // If the path is absolute, then dirfd is ignored.
         // If dirfd is 'AT_FDCWD', the path is interpreted relative to the current working directory
@@ -634,7 +669,12 @@ impl Parser {
 
     // parse a rename line
     fn rename(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a rename line of the strace log is like one of the followings:
+        // int rename(const char *oldpath, const char *newpath);
+        // renames  a  file,  moving it between directories if required.  Any other hard links to
+        // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
+        // are also unaffected.
+        //
+        // Example:
         //      rename("old-path", "new-path") = 0
         //
 
@@ -654,7 +694,12 @@ impl Parser {
 
     // parse a renameat line
     fn renameat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a renameat line of the strace log is like one of the followings:
+        // int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
+        // renames  a  file,  moving it between directories if required.  Any other hard links to
+        // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
+        // are also unaffected.
+        //
+        // Example:
         //      renameat2(dirfd, "o-path", dirfd, "n-path", RENAME_NOREPLACE) = 0
         //
         // If the path is absolute, then dirfd is ignored.
@@ -691,7 +736,10 @@ impl Parser {
 
     // parse a getrandom line
     fn get_random(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
-        // a getrandom line of the strace log is like:
+        // ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
+        // fills the buffer pointed to by buf with up to buflen random bytes.
+        //
+        // Example:
         //  getrandom("a-buf", len, flags) = random_bytes_len
 
         // extract the input arguments
