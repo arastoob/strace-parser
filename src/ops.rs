@@ -6,10 +6,11 @@ pub enum Operation {
     Read(String, i32, usize),          // args: path, offset, len
     Write(String, i32, usize, String), // args: path, offset, len, content
     Mkdir(String, String),             // args: path, mode
-    Mknod(String, i32, usize),         // args: path, offset, size
+    Mknod(String),                     // args: path
     Remove(String),                    // args: path
-    Rename(String, String),            // args: old_path, new_path
+    Rename(String, String),            // args: from_path, to_path
     OpenAt(String, i32),               // args: path, offset
+    Truncate(String),                  // args: path
     GetRandom(usize),                  // args: len
     Stat(String),                      // args: path
     Fstat(String),                     // args: path
@@ -32,8 +33,8 @@ impl Operation {
         Operation::Mkdir(path, mode)
     }
 
-    pub fn mknod(size: usize, offset: i32, path: String) -> Self {
-        Operation::Mknod(path, offset, size)
+    pub fn mknod(path: String) -> Self {
+        Operation::Mknod(path)
     }
 
     pub fn remove(path: String) -> Self {
@@ -42,6 +43,10 @@ impl Operation {
 
     pub fn open_at(offset: i32, path: String) -> Self {
         Operation::OpenAt(path, offset)
+    }
+
+    pub fn truncate(path: String) -> Self {
+        Operation::Truncate(path)
     }
 
     pub fn write(content: String, len: usize, offset: i32, path: String) -> Self {
@@ -72,35 +77,36 @@ impl Operation {
         Operation::Fstatat(path)
     }
 
-    pub fn rename(old_path: String, new_path: String) -> Self {
-        Operation::Rename(old_path, new_path)
+    pub fn rename(from: String, to: String) -> Self {
+        Operation::Rename(from, to)
     }
 
-    pub fn path(&self) -> &str {
+    pub fn path(&self) -> (Option<&str>, Option<&str>) {
         match self {
-            Operation::Mkdir(path, _) => path,
-            Operation::Mknod(path, _, _) => path,
-            Operation::Remove(path) => path,
-            Operation::Read(path, _, _) => path,
-            Operation::Write(path, _, _, _) => path,
-            Operation::OpenAt(path, _) => path,
-            Operation::Stat(path) => path,
-            Operation::Fstat(path) => path,
-            Operation::Statx(path) => path,
-            Operation::StatFS(path) => path,
-            Operation::Fstatat(path) => path,
-            Operation::Rename(path, _) => path,
-            Operation::GetRandom(_) => "",
-            Operation::NoOp => "",
+            Operation::Mkdir(path, _) => (Some(path), None),
+            Operation::Mknod(path) => (Some(path), None),
+            Operation::Remove(path) => (Some(path), None),
+            Operation::Read(path, _, _) => (Some(path), None),
+            Operation::Write(path, _, _, _) => (Some(path), None),
+            Operation::OpenAt(path, _) => (Some(path), None),
+            Operation::Truncate(path) => (Some(path), None),
+            Operation::Stat(path) => (Some(path), None),
+            Operation::Fstat(path) => (Some(path), None),
+            Operation::Statx(path) => (Some(path), None),
+            Operation::StatFS(path) => (Some(path), None),
+            Operation::Fstatat(path) => (Some(path), None),
+            Operation::Rename(from, to) => (Some(from), Some(to)),
+            Operation::GetRandom(_) => (None, None),
+            Operation::NoOp => (None, None),
         }
     }
 
-    pub fn update_path(&mut self, new_path: &str) {
+    pub fn update_path(&mut self, new_path: &str, second_new_path: Option<&str>) {
         match self {
             Operation::Mkdir(path, _) => {
                 *path = new_path.to_string();
             }
-            Operation::Mknod(path, _, _) => {
+            Operation::Mknod(path) => {
                 *path = new_path.to_string();
             }
             Operation::Remove(path) => {
@@ -113,6 +119,9 @@ impl Operation {
                 *path = new_path.to_string();
             }
             Operation::OpenAt(path, _) => {
+                *path = new_path.to_string();
+            }
+            Operation::Truncate(path) => {
                 *path = new_path.to_string();
             }
             Operation::Stat(path) => {
@@ -130,8 +139,9 @@ impl Operation {
             Operation::Fstatat(path) => {
                 *path = new_path.to_string();
             }
-            Operation::Rename(path, _) => {
-                *path = new_path.to_string();
+            Operation::Rename(from, to) => {
+                *from = new_path.to_string();
+                *to = second_new_path.unwrap_or(to).to_string();
             }
             _ => {}
         }
@@ -142,8 +152,8 @@ impl fmt::Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match &self {
             &Operation::Mkdir(ref path, ref mode) => write!(f, "mkdir({}, {})", path, mode),
-            &Operation::Mknod(ref path, ref offset, ref size) => {
-                write!(f, "mknod({}, {}, {})", path, offset, size)
+            &Operation::Mknod(ref path) => {
+                write!(f, "mknod({})", path)
             }
             &Operation::Remove(ref path) => write!(f, "remove({})", path),
             &Operation::Read(ref path, ref offset, ref len) => {
@@ -153,6 +163,7 @@ impl fmt::Display for Operation {
                 write!(f, "write({}, {}, {}, {})", path, offset, len, content)
             }
             &Operation::OpenAt(ref path, ref offset) => write!(f, "open({}, {})", path, offset),
+            &Operation::Truncate(ref path) => write!(f, "truncate({})", path),
             &Operation::GetRandom(ref len) => write!(f, "get_random({})", len),
             &Operation::Stat(ref path) => write!(f, "stat({})", path),
             &Operation::Fstat(ref path) => write!(f, "fstat({})", path),
@@ -174,9 +185,9 @@ mod test {
     #[test]
     fn update_path() -> Result<(), Box<dyn std::error::Error>> {
         let mut op = Operation::mkdir("a_path".to_string(), "0666".to_string());
-        op.update_path("b_path");
+        op.update_path("b_path", None);
 
-        assert_eq!(op.path(), "b_path");
+        assert_eq!(op.path(), (Some("b_path"), None));
 
         Ok(())
     }

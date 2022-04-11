@@ -84,8 +84,10 @@ impl Parser {
             }
 
             if line.starts_with("openat(") {
-                let operation = self.openat(line.as_ref())?;
-                operations.push(operation);
+                let ops = self.openat(line.as_ref())?;
+                for operation in ops {
+                    operations.push(operation);
+                }
             }
 
             if line.starts_with("fcntl(") {
@@ -158,7 +160,7 @@ impl Parser {
     }
 
     // parse an openat line
-    fn openat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn openat(&mut self, line: &str) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
         //
         // an openat line of the strace log is like:
         //   1.   openat(dirfd, "a-path", flags, mode) = 3
@@ -171,6 +173,12 @@ impl Parser {
         // If dirfd is a file descriptor, then the path is relative to the path of the directory
         // described by the file descriptor.
         //
+        // The important flags are:
+        //      O_APPEND: The file is opened in append mode.  Before each write(2), the file offset
+        //                is positioned at the end of the file, as if with lseek(2).
+        //      O_CREAT: If pathname does not exist, create it as a regular file.
+        //      O_TRUNC: If the file already exists and is a regular file and the access mode allows
+        //               writing (i.e., is O_RDWR or O_WRONLY) it will be truncated to length 0.
 
         // the returned file descriptor is after '='
         let fd = line
@@ -222,31 +230,71 @@ impl Parser {
             flags_mode
         };
 
-        let (offset, size) = match self.fd_map.get(&fd) {
-            Some(of) => {
-                // we have already created an OpenAt operation
-                if flags.contains("O_TRUNC") {
-                    (0, 0) // the file is opened in truncate mode, so the offset should be 0
-                } else {
-                    (of.offset, of.size) // the file is opened in non-truncate mode (e.g, append mode), so the offset is the same
+        let mut operations = vec![];
+
+        if flags.contains("O_CREAT") {
+            operations.push(Operation::mknod(path.clone()));
+        }
+
+        if flags.contains("O_TRUNC") {
+            operations.push(Operation::truncate(path.clone()));
+
+            self.fd_map
+                .insert(fd, OpenedFile::new(path.clone(), 0, 0));
+        }
+
+        let offset = match self.fd_map.get(&fd) {
+                Some(of) => {
+                    // we have already seen the file
+                    let offset = of.offset;
+                    let size = of.size;
+                    if flags.contains("O_APPEND") {
+                        // the file offset should point to the end
+                        self.fd_map
+                            .insert(fd, OpenedFile::new(path.clone(), size as i32, size));
+                        size as i32
+                    } else {
+                        self.fd_map
+                            .insert(fd, OpenedFile::new(path.clone(), offset, size));
+                        offset
+                    }
                 }
-            }
-            None => {
-                // the file is opened for the first time
-                (0, 0)
-            }
+                None => {
+                    // the file is opened for the first time
+                    self.fd_map
+                        .insert(fd, OpenedFile::new(path.clone(), 0, 0));
+                    0
+                }
         };
 
-        self.fd_map
-            .insert(fd, OpenedFile::new(path.clone(), offset, size));
+        // finally, create the openat operation
+        operations.push(Operation::open_at(offset, path));
 
-        let operation = if flags.contains("O_CREAT") {
-            Operation::mknod(size, offset, path)
-        } else {
-            Operation::open_at(offset, path)
-        };
+        // let (offset, size) = match self.fd_map.get(&fd) {
+        //     Some(of) => {
+        //         // we have already created an OpenAt operation
+        //         if flags.contains("O_TRUNC") {
+        //             (0, 0) // the file is opened in truncate mode, so the offset should be 0
+        //         } else {
+        //             (of.offset, of.size) // the file is opened in non-truncate mode (e.g, append mode), so the offset is the same
+        //         }
+        //     }
+        //     None => {
+        //         // the file is opened for the first time
+        //         (0, 0)
+        //     }
+        // };
+        //
+        // self.fd_map
+        //     .insert(fd, OpenedFile::new(path.clone(), offset, size));
+        //
+        // let operation = if flags.contains("O_CREAT") {
+        //     Operation::mknod(size, offset, path)
+        // } else {
+        //     Operation::open_at(offset, path)
+        // };
 
-        Ok(operation)
+        Ok(operations)
     }
 
     // parse a fcntl line
@@ -808,15 +856,40 @@ mod test {
     fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
-        let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation, Operation::OpenAt("a_path".to_string(), 0));
+        let operations = parser.openat(line.as_ref())?;
+        assert_eq!(operations.len(), 1);
+        assert_eq!(operations.get(0).expect("failed to read the first entry of the vector"),
+                   &Operation::OpenAt("a_path".to_string(), 0));
 
         let line =
             "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
-        let operation = parser.openat(line.as_ref())?;
+        let operations = parser.openat(line.as_ref())?;
+        assert_eq!(operations.len(), 2);
         assert_eq!(
-            operation,
-            Operation::Mknod("another_path".to_string(), 0, 0)
+            operations.get(0).expect("failed to read the first entry of the vector"),
+            &Operation::Mknod("another_path".to_string())
+        );
+        assert_eq!(
+            operations.get(1).expect("failed to read the second entry of the vector"),
+            &Operation::OpenAt("another_path".to_string(), 0)
+        );
+
+
+        let line =
+            "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7".to_string();
+        let operations = parser.openat(line.as_ref())?;
+        assert_eq!(operations.len(), 3);
+        assert_eq!(
+            operations.get(0).expect("failed to read the first entry of the vector"),
+            &Operation::Mknod("another_path".to_string())
+        );
+        assert_eq!(
+            operations.get(1).expect("failed to read the second entry of the vector"),
+            &Operation::Truncate("another_path".to_string())
+        );
+        assert_eq!(
+            operations.get(2).expect("failed to read the third entry of the vector"),
+            &Operation::OpenAt("another_path".to_string(), 0)
         );
 
         Ok(())
@@ -865,8 +938,7 @@ mod test {
     fn write() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation, Operation::Mknod("a_path".to_string(), 0, 0));
+        let _operations = parser.openat(line.as_ref())?;
 
         // first write
         let write_line1 = "write(5, some content here, 17) = 17".to_string();
@@ -886,16 +958,11 @@ mod test {
 
         // open the file one more time to check the offset
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        let operation = parser.openat(line.as_ref())?;
-        assert_eq!(
-            operation,
-            Operation::Mknod("a_path".to_string(), 17 + 5, 17 + 5)
-        );
+        let _operations = parser.openat(line.as_ref())?;
 
         // now open the file with truncate flag, which should zero the size and offset
-        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT|O_TRUNC) = 5".to_string();
-        let operation = parser.openat(line.as_ref())?;
-        assert_eq!(operation, Operation::Mknod("a_path".to_string(), 0, 0));
+        let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_TRUNC) = 5".to_string();
+        let _operations = parser.openat(line.as_ref())?;
 
         // write after truncate
         let write_line2 = "write(5, some other content here, 10) = 10".to_string();
