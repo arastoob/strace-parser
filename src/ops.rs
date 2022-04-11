@@ -80,67 +80,6 @@ impl Operation {
     pub fn rename(from: String, to: String) -> Self {
         Operation::Rename(from, to)
     }
-
-    pub fn path(&self) -> &str {
-        match self {
-            Operation::Mkdir(path, _) => path,
-            Operation::Mknod(path, _, _) => path,
-            Operation::Remove(path) => path,
-            Operation::Read(path, _, _) => path,
-            Operation::Write(path, _, _, _) => path,
-            Operation::OpenAt(path, _) => path,
-            Operation::Stat(path) => path,
-            Operation::Fstat(path) => path,
-            Operation::Statx(path) => path,
-            Operation::StatFS(path) => path,
-            Operation::Fstatat(path) => path,
-            Operation::Rename(path, _) => path,
-            Operation::GetRandom(_) => "",
-            Operation::NoOp => "",
-        }
-    }
-
-    pub fn update_path(&mut self, new_path: &str) {
-        match self {
-            Operation::Mkdir(path, _) => {
-                *path = new_path.to_string();
-            }
-            Operation::Mknod(path, _, _) => {
-                *path = new_path.to_string();
-            }
-            Operation::Remove(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::Read(path, _, _) => {
-                *path = new_path.to_string();
-            }
-            Operation::Write(path, _, _, _) => {
-                *path = new_path.to_string();
-            }
-            Operation::OpenAt(path, _) => {
-                *path = new_path.to_string();
-            }
-            Operation::Stat(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::Fstat(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::Statx(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::StatFS(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::Fstatat(path) => {
-                *path = new_path.to_string();
-            }
-            Operation::Rename(path, _) => {
-                *path = new_path.to_string();
-            }
-            _ => {}
-        }
-    }
 }
 
 impl fmt::Display for Operation {
@@ -170,20 +109,5 @@ impl fmt::Display for Operation {
             }
             &Operation::NoOp => write!(f, "no-op"),
         }
-    }
-}
-
-#[cfg(test)]
-mod test {
-    use crate::Operation;
-
-    #[test]
-    fn update_path() -> Result<(), Box<dyn std::error::Error>> {
-        let mut op = Operation::mkdir("a_path".to_string(), "0666".to_string());
-        op.update_path("b_path");
-
-        assert_eq!(op.path(), "b_path");
-
-        Ok(())
     }
 }
