@@ -270,30 +270,6 @@ impl Parser {
         // finally, create the openat operation
         operations.push(Operation::open_at(offset, path));
 
-        // let (offset, size) = match self.fd_map.get(&fd) {
-        //     Some(of) => {
-        //         // we have already created an OpenAt operation
-        //         if flags.contains("O_TRUNC") {
-        //             (0, 0) // the file is opened in truncate mode, so the offset should be 0
-        //         } else {
-        //             (of.offset, of.size) // the file is opened in non-truncate mode (e.g, append mode), so the offset is the same
-        //         }
-        //     }
-        //     None => {
-        //         // the file is opened for the first time
-        //         (0, 0)
-        //     }
-        // };
-        //
-        // self.fd_map
-        //     .insert(fd, OpenedFile::new(path.clone(), offset, size));
-        //
-        // let operation = if flags.contains("O_CREAT") {
-        //     Operation::mknod(size, offset, path)
-        // } else {
-        //     Operation::open_at(offset, path)
-        // };
-
         Ok(operations)
     }
 
