@@ -239,32 +239,30 @@ impl Parser {
         if flags.contains("O_TRUNC") {
             operations.push(Operation::truncate(path.clone()));
 
-            self.fd_map
-                .insert(fd, OpenedFile::new(path.clone(), 0, 0));
+            self.fd_map.insert(fd, OpenedFile::new(path.clone(), 0, 0));
         }
 
         let offset = match self.fd_map.get(&fd) {
-                Some(of) => {
-                    // we have already seen the file
-                    let offset = of.offset;
-                    let size = of.size;
-                    if flags.contains("O_APPEND") {
-                        // the file offset should point to the end
-                        self.fd_map
-                            .insert(fd, OpenedFile::new(path.clone(), size as i32, size));
-                        size as i32
-                    } else {
-                        self.fd_map
-                            .insert(fd, OpenedFile::new(path.clone(), offset, size));
-                        offset
-                    }
-                }
-                None => {
-                    // the file is opened for the first time
+            Some(of) => {
+                // we have already seen the file
+                let offset = of.offset;
+                let size = of.size;
+                if flags.contains("O_APPEND") {
+                    // the file offset should point to the end
                     self.fd_map
-                        .insert(fd, OpenedFile::new(path.clone(), 0, 0));
-                    0
+                        .insert(fd, OpenedFile::new(path.clone(), size as i32, size));
+                    size as i32
+                } else {
+                    self.fd_map
+                        .insert(fd, OpenedFile::new(path.clone(), offset, size));
+                    offset
                 }
+            }
+            None => {
+                // the file is opened for the first time
+                self.fd_map.insert(fd, OpenedFile::new(path.clone(), 0, 0));
+                0
+            }
         };
 
         // finally, create the openat operation
@@ -442,7 +440,6 @@ impl Parser {
                 path = self.relative_to_absolute(dirfd, &path)?;
             }
         }
-
 
         let file_dir = self.file_dir(&args, &path, "statx")?;
         self.files.insert(file_dir);
@@ -834,37 +831,51 @@ mod test {
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
         let operations = parser.openat(line.as_ref())?;
         assert_eq!(operations.len(), 1);
-        assert_eq!(operations.get(0).expect("failed to read the first entry of the vector"),
-                   &Operation::OpenAt("a_path".to_string(), 0));
+        assert_eq!(
+            operations
+                .get(0)
+                .expect("failed to read the first entry of the vector"),
+            &Operation::OpenAt("a_path".to_string(), 0)
+        );
 
         let line =
             "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
         let operations = parser.openat(line.as_ref())?;
         assert_eq!(operations.len(), 2);
         assert_eq!(
-            operations.get(0).expect("failed to read the first entry of the vector"),
+            operations
+                .get(0)
+                .expect("failed to read the first entry of the vector"),
             &Operation::Mknod("another_path".to_string())
         );
         assert_eq!(
-            operations.get(1).expect("failed to read the second entry of the vector"),
+            operations
+                .get(1)
+                .expect("failed to read the second entry of the vector"),
             &Operation::OpenAt("another_path".to_string(), 0)
         );
 
-
         let line =
-            "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7".to_string();
+            "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7"
+                .to_string();
         let operations = parser.openat(line.as_ref())?;
         assert_eq!(operations.len(), 3);
         assert_eq!(
-            operations.get(0).expect("failed to read the first entry of the vector"),
+            operations
+                .get(0)
+                .expect("failed to read the first entry of the vector"),
             &Operation::Mknod("another_path".to_string())
         );
         assert_eq!(
-            operations.get(1).expect("failed to read the second entry of the vector"),
+            operations
+                .get(1)
+                .expect("failed to read the second entry of the vector"),
             &Operation::Truncate("another_path".to_string())
         );
         assert_eq!(
-            operations.get(2).expect("failed to read the third entry of the vector"),
+            operations
+                .get(2)
+                .expect("failed to read the third entry of the vector"),
             &Operation::OpenAt("another_path".to_string(), 0)
         );
 
