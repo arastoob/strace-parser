@@ -8,8 +8,10 @@ use std::path::PathBuf;
 
 pub struct Parser {
     log_file: PathBuf,
-    fd_map: HashMap<i32, OpenedFile>,
+    fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     files: HashSet<FileDir>, // keep existing files' size
+    processes: HashMap<usize, Vec<i32>>, // a map from process id to a list of operation ids
+    ongoing_ops: HashMap<usize, &'static str> // keeping the unfinished operations for each process
 }
 
 #[derive(Clone, Eq, Hash, PartialEq)]
@@ -62,6 +64,8 @@ impl Parser {
             log_file,
             fd_map: HashMap::new(),
             files: HashSet::new(),
+            processes: HashMap::new(),
+            ongoing_ops: HashMap::new()
         }
     }
 
@@ -73,6 +77,8 @@ impl Parser {
 
         for line in reader.lines() {
             let line = line?;
+
+            let pid = self.process_id(line.as_ref())?;
 
             // filter out the operations
             if line.contains("= -1") || // ops with error result
@@ -862,6 +868,20 @@ impl Parser {
         }
     }
 
+    fn process_id(
+        &self,
+        str: &str,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        // extract the process id
+        let pid = str.split_at(
+            str.find(" ")
+                .ok_or(Error::NotFound(format!("= from {}", str)))?
+                + 1
+        ).0.trim().parse::<usize>()?;
+
+        Ok(pid)
+    }
+
     pub fn accessed_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
         Ok(self.files.clone())
     }
@@ -1085,6 +1105,17 @@ mod test {
             operation,
             Operation::Rename("old_path".to_string(), "new_path".to_string())
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn process_id() -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = Parser::new(PathBuf::new());
+        let openat_line = "909190 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let pid = parser.process_id(openat_line.as_ref())?;
+
+        assert_eq!(pid, 909190);
 
         Ok(())
     }
