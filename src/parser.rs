@@ -5,6 +5,7 @@ use std::fmt::Formatter;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use regex::Regex;
 
 pub struct Parser {
     log_file: PathBuf,
@@ -77,80 +78,137 @@ impl Parser {
             // filter out the operations
             if line.contains("= -1") || // ops with error result
                 line.starts_with("close") || // close op
-                line.starts_with("readlink")
-            // readlink op
+                line.starts_with("readlink") || // readlink op
+                line.starts_with("---") ||
+                line.starts_with("+++")
+
             {
                 continue;
             }
 
-            if line.starts_with("openat(") {
-                let ops = self.openat(line.as_ref())?;
-                for operation in ops {
-                    operations.push(operation);
-                }
+            let (op, args, ret) = self.parts(&line)?;
+
+            match op.as_ref() {
+                "openat" => {
+                    let ops = self.openat(args, ret)?;
+                    for operation in ops {
+                        operations.push(operation);
+                    }
+                },
+                "fcntl" => {
+                    operations.push(self.fcntl(args, ret)?);
+                },
+                "read" => {
+                    // read op updates the file offset
+                    operations.push(self.read(args)?);
+                },
+                "stat" => {
+                    operations.push(self.stat(args)?);
+                },
+                "fstat" => {
+                    operations.push(self.fstat(args)?);
+                },
+                "statx" => {
+                    operations.push(self.statx(args)?);
+                },
+                "statfs" => {
+                    operations.push(self.statfs(args)?);
+                },
+                op if op == "fstatat64" || op == "newfstatat" || op == "fstatat" => {
+                    operations.push(self.fstatat(args)?);
+                },
+                "pread" => {
+                    operations.push(self.pread(args)?);
+                },
+                "getrandom" => {
+                    operations.push(self.get_random(args)?);
+                },
+                "write" => {
+                    operations.push(self.write(args)?);
+                },
+                "mkdir" => {
+                    operations.push(self.mkdir(args)?);
+                },
+                "unlinkat" => {
+                    operations.push(self.unlink(args)?);
+                },
+                "rename" => {
+                    operations.push(self.rename(args)?);
+                },
+                op if op == "renameat" || op == "renameat2" => {
+                    operations.push(self.renameat(args)?);
+                },
+                _ => {}
             }
 
-            if line.starts_with("fcntl(") {
-                let operation = self.fcntl(line.as_ref())?;
-                operations.push(operation);
-            }
-
-            if line.starts_with("read(") {
-                // read op updates the file offset
-                operations.push(self.read(line.as_ref())?);
-            }
-
-            if line.starts_with("stat(") {
-                operations.push(self.stat(line.as_ref())?);
-            }
-
-            if line.starts_with("fstat(") {
-                operations.push(self.fstat(line.as_ref())?);
-            }
-
-            if line.starts_with("statx(") {
-                operations.push(self.statx(line.as_ref())?);
-            }
-
-            if line.starts_with("statfs(") {
-                operations.push(self.statfs(line.as_ref())?);
-            }
-
-            if line.starts_with("fstatat64(")
-                || line.starts_with("newfstatat(")
-                || line.starts_with("fstatat(")
-            {
-                operations.push(self.fstatat(line.as_ref())?);
-            }
-
-            if line.starts_with("pread(") {
-                // pread op does not update the file offset
-                operations.push(self.pread(line.as_ref())?);
-            }
-
-            if line.starts_with("getrandom(") {
-                operations.push(self.get_random(line.as_ref())?);
-            }
-
-            if line.starts_with("write(") {
-                operations.push(self.write(line.as_ref())?);
-            }
-
-            if line.starts_with("mkdir(") {
-                operations.push(self.mkdir(line.as_ref())?);
-            }
-
-            if line.starts_with("unlinkat(") || line.starts_with("unlink(") {
-                operations.push(self.unlink(line.as_ref())?);
-            }
-
-            if line.starts_with("rename(") {
-                operations.push(self.rename(line.as_ref())?);
-            }
-
-            if line.starts_with("renameat(") || line.starts_with("renameat2(") {
-                operations.push(self.renameat(line.as_ref())?);
-            }
+            // if op == "openat" {
+            //     let ops = self.openat(args, ret)?;
+            //     for operation in ops {
+            //         operations.push(operation);
+            //     }
+            // }
+            //
+            // if op == "fcntl" {
+            //     let operation = self.fcntl(args, ret)?;
+            //     operations.push(operation);
+            // }
+            //
+            // if op == "read" {
+            //     // read op updates the file offset
+            //     operations.push(self.read(args)?);
+            // }
+            //
+            // if op == "stat" {
+            //     operations.push(self.stat(args)?);
+            // }
+            //
+            // if op == "fstat" {
+            //     operations.push(self.fstat(args)?);
+            // }
+            //
+            // if op == "statx" {
+            //     operations.push(self.statx(args)?);
+            // }
+            //
+            // if op == "statfs" {
+            //     operations.push(self.statfs(args)?);
+            // }
+            //
+            // if op == "fstatat64"
+            //     || line.starts_with("newfstatat(")
+            //     || line.starts_with("fstatat(")
+            // {
+            //     operations.push(self.fstatat(args)?);
+            // }
+            //
+            // if op == "pread" {
+            //     // pread op does not update the file offset
+            //     operations.push(self.pread(args)?);
+            // }
+            //
+            // if op == "getrandom" {
+            //     operations.push(self.get_random(args)?);
+            // }
+            //
+            // if op == "write" {
+            //     operations.push(self.write(args)?);
+            // }
+            //
+            // if op == "mkdir" {
+            //     operations.push(self.mkdir(args)?);
+            // }
+            //
+            // if op == "unlinkat" || op == "unlink" {
+            //     operations.push(self.unlink(args)?);
+            // }
+            //
+            // if op == "rename" {
+            //     operations.push(self.rename(args)?);
+            // }
+            //
+            // if op == "renameat" || op == "renameat2" {
+            //     operations.push(self.renameat(args)?);
+            // }
         }
 
         // remove no-ops
@@ -160,7 +218,7 @@ impl Parser {
     }
 
     // parse an openat line
-    fn openat(&mut self, line: &str) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
+    fn openat(&mut self, args: String, ret: String) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
         //
         // int openat(int dirfd, const char *path, int flags, mode_t mode);
         //
@@ -177,18 +235,18 @@ impl Parser {
         //      O_TRUNC: If the file already exists and is a regular file and the access mode allows
         //               writing (i.e., is O_RDWR or O_WRONLY) it will be truncated to length 0.
 
-        // the returned file descriptor is after '='
-        let fd = line
-            .split_at(
-                line.rfind("=")
-                    .ok_or(Error::NotFound("= from openat line".to_string()))?
-                    + 1,
-            )
-            .1;
-        let fd = fd.trim().parse::<i32>()?;
+        // the returned file descriptor is the return value after '='
+        // let fd = line
+        //     .split_at(
+        //         line.rfind("=")
+        //             .ok_or(Error::NotFound("= from openat line".to_string()))?
+        //             + 1,
+        //     )
+        //     .1;
+        let fd = ret.trim().parse::<i32>()?;
 
         // extract the input arguments
-        let args = self.args(line, "openat")?;
+        // let args = self.args(line, "openat")?;
 
         // extract the path from input arguments
         let mut path = self.path(&args, "openat")?;
@@ -269,7 +327,7 @@ impl Parser {
     }
 
     // parse a fcntl line
-    fn fcntl(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fcntl(&mut self, args: String, ret: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fcntl(int fd, int cmd, ... /* arg */ );
         // performs one of the operations on the open file descriptor fd.  The operation is determined by cmd.
         //
@@ -284,16 +342,17 @@ impl Parser {
         //  return value of fcntl.
 
         // the returned file descriptor is after '='
-        let dup_fd = line
-            .split_at(
-                line.rfind("=")
-                    .ok_or(Error::NotFound("= from fcntl line".to_string()))?
-                    + 1,
-            )
-            .1;
+        let dup_fd = ret.trim().parse::<i32>()?;
+        // let dup_fd = line
+        //     .split_at(
+        //         line.rfind("=")
+        //             .ok_or(Error::NotFound("= from fcntl line".to_string()))?
+        //             + 1,
+        //     )
+        //     .1;
 
         // extract the input arguments
-        let args = self.args(line, "fcntl")?;
+        // let args = self.args(line, "fcntl")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -312,7 +371,7 @@ impl Parser {
             let size = fd_of.size;
 
             // add the duplicated fd to the map
-            let dup_fd = dup_fd.trim().parse::<i32>()?;
+            // let dup_fd = dup_fd.trim().parse::<i32>()?;
 
             self.fd_map
                 .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
@@ -322,7 +381,7 @@ impl Parser {
     }
 
     // parse a read line
-    fn read(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn read(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t read(int fd, void *buf, size_t count);
         // attempts to read up to count bytes from file descriptor fd into the buffer starting at buf.
         //
@@ -331,7 +390,7 @@ impl Parser {
         //
 
         // extract the input arguments
-        let args = self.args(line, "read")?;
+        // let args = self.args(line, "read")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -361,7 +420,7 @@ impl Parser {
     }
 
     // parse a stat line
-    fn stat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn stat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int stat(const char *pathname, struct stat *statbuf);
         // display file or file system status.
         //
@@ -371,7 +430,7 @@ impl Parser {
         // the file information such as st_size is available between {}
 
         // extract the input arguments
-        let args = self.args(line, "stat")?;
+        // let args = self.args(line, "stat")?;
 
         // extract the path from input arguments
         let path = self.path(&args, "stat")?;
@@ -383,7 +442,7 @@ impl Parser {
     }
 
     // parse a fstat line
-    fn fstat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -393,7 +452,7 @@ impl Parser {
         // the file information such as st_size is available between {}
 
         // extract the input arguments
-        let args = self.args(line, "fstat")?;
+        // let args = self.args(line, "fstat")?;
 
         let fd = args
             .split_at(args.find(",").ok_or(Error::NotFound("(".to_string()))?)
@@ -415,7 +474,7 @@ impl Parser {
     }
 
     // parse a statx line
-    fn statx(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn statx(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int statx(int dirfd, const char *pathname, int flags,
         //                  unsigned int mask, struct statx *statxbuf);
         //  returns information about a file, storing it in the buffer pointed to by statxbuf.
@@ -434,7 +493,7 @@ impl Parser {
         // the file information such as stx_size is available between {}
 
         // extract the input arguments
-        let args = self.args(line, "statx")?;
+        // let args = self.args(line, "statx")?;
 
         // extract the path from input arguments
         let mut path = self.path(&args, "statx")?;
@@ -460,7 +519,7 @@ impl Parser {
     }
 
     // parse a fstatat line
-    fn fstatat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstatat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstatat(int dirfd, const char *pathname, struct stat *statbuf,
         //                    int flags);
         //  return information about a file, in the buffer pointed to by statbuf
@@ -479,7 +538,7 @@ impl Parser {
         // the file information such as st_size is available between {}
 
         // extract the input arguments
-        let args = self.args(line, "fstatat")?;
+        // let args = self.args(line, "fstatat")?;
 
         // extract the path from input arguments
         let mut path = self.path(&args, "fstatat")?;
@@ -505,7 +564,7 @@ impl Parser {
     }
 
     // parse a statfs line
-    fn statfs(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn statfs(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int statfs(const char *path, struct statfs *buf);
         // returns information about a mounted filesystem
         //
@@ -518,7 +577,7 @@ impl Parser {
         // here we just care about the path and don't need the outputs
 
         // extract the input arguments
-        let args = self.args(line, "statfs")?;
+        // let args = self.args(line, "statfs")?;
 
         // extract the path from input arguments
         let path = self.path(&args, "statfs")?;
@@ -527,7 +586,7 @@ impl Parser {
     }
 
     // parse a read line
-    fn pread(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn pread(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t pread(int fd, void *buf, size_t count, off_t offset);
         // reads  up  to  count  bytes from file descriptor fd at offset offset
         // (from the start of the file) into the buffer starting at buf.  The file offset is not changed.
@@ -538,7 +597,7 @@ impl Parser {
         // the operation reads len bytes from input offset and does not change the opened file offset after read
 
         // extract the input arguments
-        let args = self.args(line, "pread")?;
+        // let args = self.args(line, "pread")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -559,7 +618,7 @@ impl Parser {
     }
 
     // parse a write line
-    fn write(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn write(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t write(int fd, const void *buf, size_t count);
         // writes up to count bytes from the buffer starting at buf to the file referred to
         // by the file descriptor fd.
@@ -568,7 +627,7 @@ impl Parser {
         //  write(fd, "a-string", len) = write_len
 
         // extract the input arguments
-        let args = self.args(line, "write")?;
+        // let args = self.args(line, "write")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let fd = parts[0].trim().parse::<i32>()?;
@@ -604,7 +663,7 @@ impl Parser {
     }
 
     // parse a write line
-    fn mkdir(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn mkdir(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int mkdir(const char *pathname, mode_t mode);
         // attempts to create a directory named pathname.
         //
@@ -612,7 +671,7 @@ impl Parser {
         //  mkdir("a-path", mode) = 0
 
         // extract the input arguments
-        let args = self.args(line, "mkdir")?;
+        // let args = self.args(line, "mkdir")?;
 
         // extract the path from input arguments
         let path = self.path(&args, "mkdir")?;
@@ -626,7 +685,7 @@ impl Parser {
     }
 
     // parse a unlink line
-    fn unlink(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn unlink(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int unlinkat(int dirfd, const char *pathname, int flags);
         // deletes a name from the filesystem.  If that name was the last link to a file and no
         // processes have the file open, the file is deleted and the space it was using is made
@@ -645,7 +704,7 @@ impl Parser {
         //
 
         // extract the input arguments
-        let args = self.args(line, "unlink")?;
+        // let args = self.args(line, "unlink")?;
 
         // extract the path from input arguments
         let mut path = self.path(&args, "unlink")?;
@@ -668,7 +727,7 @@ impl Parser {
     }
 
     // parse a rename line
-    fn rename(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn rename(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int rename(const char *oldpath, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -679,7 +738,7 @@ impl Parser {
         //
 
         // extract the input arguments
-        let args = self.args(line, "rename")?;
+        // let args = self.args(line, "rename")?;
 
         let (old, new) = args.split_at(
             args.find(",")
@@ -693,7 +752,7 @@ impl Parser {
     }
 
     // parse a renameat line
-    fn renameat(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn renameat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -710,7 +769,7 @@ impl Parser {
         //
 
         // extract the input arguments
-        let args = self.args(line, "rename")?;
+        // let args = self.args(line, "rename")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let dirfd1 = parts[0];
@@ -735,7 +794,7 @@ impl Parser {
     }
 
     // parse a getrandom line
-    fn get_random(&mut self, line: &str) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn get_random(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
         // fills the buffer pointed to by buf with up to buflen random bytes.
         //
@@ -743,7 +802,7 @@ impl Parser {
         //  getrandom("a-buf", len, flags) = random_bytes_len
 
         // extract the input arguments
-        let args = self.args(line, "getrandom")?;
+        // let args = self.args(line, "getrandom")?;
 
         let parts: Vec<&str> = args.split(",").collect();
         let _buf = parts[0].to_string();
@@ -753,30 +812,16 @@ impl Parser {
         Ok(Operation::get_random(len))
     }
 
-    // extract the input args in-between ( and ) from the input string
-    fn args(&self, str: &str, callee: &str) -> Result<String, Box<dyn std::error::Error>> {
-        // the body is before '='
-        let body = str
-            .split_at(
-                str.rfind("=")
-                    .ok_or(Error::NotFound(format!("= from {} line", callee)))?,
-            )
-            .0;
+    // extract operation name, input args in-between ( and ), and return value from the input string
+    fn parts(&self, str: &str) -> Result<(String, String, String), Box<dyn std::error::Error>> {
+        let re = Regex::new(r"^(?P<op>.+)\((?P<args>.*)\)\s+=\s+(?P<ret>\d+|-\d+|\?)\s*.*$")?;
 
-        let args = body
-            .split_at(
-                body.find("(")
-                    .ok_or(Error::NotFound(format!("( from {} line", callee)))?
-                    + 1,
-            )
-            .1;
-        Ok(args
-            .split_at(
-                args.rfind(")")
-                    .ok_or(Error::NotFound(format!(") from {} line", callee)))?,
-            )
-            .0
-            .to_string())
+        assert!(re.is_match(str));
+
+        let cap = re.captures(str)
+            .ok_or(Error::ParseError(str.to_string()))?;
+
+        Ok((cap["op"].to_string(), cap["args"].to_string(), cap["ret"].to_string()))
     }
 
     // extract a path in-between " and " from the input string
@@ -873,11 +918,44 @@ mod test {
     use crate::Operation;
     use std::path::PathBuf;
 
+
+    #[test]
+    fn parts() -> Result<(), Box<dyn std::error::Error>> {
+        let mut parser = Parser::new(PathBuf::new());
+        let str =  "openat(AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC) = 3";
+        let (op, args, ret) = parser.parts(str.as_ref())?;
+        assert_eq!(op, "openat");
+        assert_eq!(args, "AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC");
+        assert_eq!(ret, "3");
+
+        let str =  "close(3)                                = 0";
+        let (op, args, ret) = parser.parts(str.as_ref())?;
+        assert_eq!(op, "close");
+        assert_eq!(args, "3");
+        assert_eq!(ret, "0");
+
+
+        let str =  "statx(AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30) = -1 ENOENT (No such file or directory)";
+        let (op, args, ret) = parser.parts(str.as_ref())?;
+        assert_eq!(op, "statx");
+        assert_eq!(args, "AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30");
+        assert_eq!(ret, "-1");
+
+        let str = "renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0";
+        let (op, args, ret) = parser.parts(str.as_ref())?;
+        assert_eq!(op, "renameat2");
+        assert_eq!(args, "AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE");
+        assert_eq!(ret, "0");
+
+        Ok(())
+    }
+
     #[test]
     fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
-        let operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operations = parser.openat(args, ret)?;
         assert_eq!(operations.len(), 1);
         assert_eq!(
             operations
@@ -888,7 +966,8 @@ mod test {
 
         let line =
             "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
-        let operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operations = parser.openat(args, ret)?;
         assert_eq!(operations.len(), 2);
         assert_eq!(
             operations
@@ -906,7 +985,8 @@ mod test {
         let line =
             "openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7"
                 .to_string();
-        let operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operations = parser.openat(args, ret)?;
         assert_eq!(operations.len(), 3);
         assert_eq!(
             operations
@@ -934,14 +1014,17 @@ mod test {
     fn read() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        let _operation = parser.openat(openat_line.as_ref())?;
+        let (op, args, ret) = parser.parts(&openat_line)?;
+        let _operation = parser.openat(args, ret)?;
 
         let read_line1 = "read(3, buf, 50) = 50".to_string();
-        let read_op1 = parser.read(read_line1.as_ref())?;
+        let (op, args, ret) = parser.parts(&read_line1)?;
+        let read_op1 = parser.read(args)?;
         assert_eq!(read_op1, Operation::Read("a_path".to_string(), 0, 50));
 
         let read_line2 = "read(3, buf, 20) = 20".to_string();
-        let read_op2 = parser.read(read_line2.as_ref())?;
+        let (op, args, ret) = parser.parts(&read_line2)?;
+        let read_op2 = parser.read(args)?;
         assert_eq!(read_op2, Operation::Read("a_path".to_string(), 50, 20));
 
         Ok(())
@@ -951,19 +1034,23 @@ mod test {
     fn pread() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        let _operation = parser.openat(openat_line.as_ref())?;
+        let (op, args, ret) = parser.parts(&openat_line)?;
+        let _operation = parser.openat(args, ret)?;
 
         let read_line1 = "pread(3, buf, 50, 100) = 50".to_string();
-        let pread_op1 = parser.pread(read_line1.as_ref())?;
+        let (op, args, ret) = parser.parts(&read_line1)?;
+        let pread_op1 = parser.pread(args)?;
         assert_eq!(pread_op1, Operation::Read("a_path".to_string(), 100, 50));
 
         let read_line2 = "pread(3, buf, 20, 500) = 20".to_string();
-        let pread_op2 = parser.pread(read_line2.as_ref())?;
+        let (op, args, ret) = parser.parts(&read_line2)?;
+        let pread_op2 = parser.pread(args)?;
         assert_eq!(pread_op2, Operation::Read("a_path".to_string(), 500, 20));
 
         // the previous pread ops should not update the opened file offset
         let read_line3 = "read(3, buf, 20) = 20".to_string();
-        let read_op = parser.read(read_line3.as_ref())?;
+        let (op, args, ret) = parser.parts(&read_line3)?;
+        let read_op = parser.read(args)?;
         assert_eq!(read_op, Operation::Read("a_path".to_string(), 0, 20));
 
         Ok(())
@@ -973,11 +1060,13 @@ mod test {
     fn write() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        let _operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let _operations = parser.openat(args, ret)?;
 
         // first write
         let write_line1 = "write(5, some content here, 17) = 17".to_string();
-        let write_op1 = parser.write(write_line1.as_ref())?;
+        let (op, args, ret) = parser.parts(&write_line1)?;
+        let write_op1 = parser.write(args)?;
         assert_eq!(
             write_op1,
             Operation::Write("a_path".to_string(), 0, 17, "some content here".to_string())
@@ -985,7 +1074,8 @@ mod test {
 
         // second write
         let write_line2 = "write(5, hello, 5) = 5".to_string();
-        let write_op2 = parser.write(write_line2.as_ref())?;
+        let (op, args, ret) = parser.parts(&write_line2)?;
+        let write_op2 = parser.write(args)?;
         assert_eq!(
             write_op2,
             Operation::Write("a_path".to_string(), 17, 5, "hello".to_string())
@@ -993,15 +1083,18 @@ mod test {
 
         // open the file one more time to check the offset
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        let _operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let _operations = parser.openat(args, ret)?;
 
         // now open the file with truncate flag, which should zero the size and offset
         let line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_TRUNC) = 5".to_string();
-        let _operations = parser.openat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let _operations = parser.openat(args, ret)?;
 
         // write after truncate
         let write_line2 = "write(5, some other content here, 10) = 10".to_string();
-        let write_op2 = parser.write(write_line2.as_ref())?;
+        let (op, args, ret) = parser.parts(&write_line2)?;
+        let write_op2 = parser.write(args)?;
         assert_eq!(
             write_op2,
             Operation::Write(
@@ -1019,7 +1112,8 @@ mod test {
     fn get_random() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
-        let operation = parser.get_random(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operation = parser.get_random(args)?;
         assert_eq!(operation, Operation::GetRandom(16));
 
         Ok(())
@@ -1029,10 +1123,13 @@ mod test {
     fn fstat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        let _operation = parser.openat(openat_line.as_ref())?;
+        let (op, args, ret) = parser.parts(&openat_line)?;
+        println!("args: {}", args);
+        let _operation = parser.openat(args, ret)?;
 
         let fstat_line = "fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
-        let fstat_op = parser.fstat(fstat_line.as_ref())?;
+        let (op, args, ret) = parser.parts(&fstat_line)?;
+        let fstat_op = parser.fstat(args)?;
         assert_eq!(fstat_op, Operation::Fstat("a_path".to_string()));
 
         assert_eq!(parser.files.len(), 1);
@@ -1052,7 +1149,8 @@ mod test {
         let mut parser = Parser::new(PathBuf::new());
 
         let mkdir_line = "mkdir(\"a_path\", 0777) = 0".to_string();
-        let mkdir_op = parser.mkdir(mkdir_line.as_ref())?;
+        let (op, args, ret) = parser.parts(&mkdir_line)?;
+        let mkdir_op = parser.mkdir(args)?;
         assert_eq!(
             mkdir_op,
             Operation::Mkdir("a_path".to_string(), "0777".to_string())
@@ -1065,7 +1163,8 @@ mod test {
     fn rename() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "rename(\"old_path\", \"new_path\") = 0".to_string();
-        let operation = parser.rename(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operation = parser.rename(args)?;
         assert_eq!(
             operation,
             Operation::Rename("old_path".to_string(), "new_path".to_string())
@@ -1080,7 +1179,8 @@ mod test {
         let line =
             "renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0"
                 .to_string();
-        let operation = parser.renameat(line.as_ref())?;
+        let (op, args, ret) = parser.parts(&line)?;
+        let operation = parser.renameat(args)?;
         assert_eq!(
             operation,
             Operation::Rename("old_path".to_string(), "new_path".to_string())
