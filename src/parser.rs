@@ -1,5 +1,6 @@
 use crate::error::Error;
 use crate::ops::Operation;
+use crate::order_manager::OrderManager;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::fs::File;
@@ -11,7 +12,6 @@ pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     files: HashSet<FileDir>, // keep existing files' size
-    processes: HashMap<usize, Vec<i32>>, // a map from process id to a list of operation ids
     ongoing_ops: HashMap<usize, String> // keeping the unfinished operations for each process
 }
 
@@ -71,12 +71,11 @@ impl Parser {
             log_file,
             fd_map: HashMap::new(),
             files: HashSet::new(),
-            processes: HashMap::new(),
             ongoing_ops: HashMap::new()
         }
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
+    pub fn parse(&mut self) -> Result<(Vec<(usize, Operation)>, Vec<(usize, Operation)>), Box<dyn std::error::Error>> {
         let mut operations = vec![];
 
         let file = File::open(self.log_file.clone())?;
@@ -104,117 +103,57 @@ impl Parser {
             match self.parts(&line)? {
                 Parts::Unfinished(_, _) => continue,
                 Parts::Finished(pid, op, args, ret) => {
-                    match self.processes.get(&pid) {
-                        Some(_) => {},
-                        None => {
-                            // the process has not been added, so add it
-                            self.processes.insert(pid, vec![]);
-                        }
-                    }
-
                     match op.as_ref() {
                         "openat" => {
-                            let ops = self.openat(args, ret)?;
-                            let mut idx = operations.len() as i32;
-                            for operation in ops {
-                                operations.push(operation);
-
-                                // add the operation index done by a process with id pid
-                                self.processes.get_mut(&pid)
-                                    .ok_or(Error::NotFound(format!("process id {}", pid)))?.push(idx);
-                                idx += 1;
+                            for operation in self.openat(args, ret)? {
+                                operations.push((pid, operation));
                             }
                         },
                         "fcntl" => {
-                            operations.push(self.fcntl(args, ret)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.fcntl(args, ret)?));
                         },
                         "read" => {
                             // read op updates the file offset
-                            operations.push(self.read(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.read(args)?));
                         },
                         "stat" => {
-                            operations.push(self.stat(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.stat(args)?));
                         },
                         "fstat" => {
-                            operations.push(self.fstat(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.fstat(args)?));
                         },
                         "statx" => {
-                            operations.push(self.statx(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.statx(args)?));
                         },
                         "statfs" => {
-                            operations.push(self.statfs(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.statfs(args)?));
                         },
                         op if op == "fstatat64" || op == "newfstatat" || op == "fstatat" => {
-                            operations.push(self.fstatat(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.fstatat(args)?));
                         },
                         "pread" => {
-                            operations.push(self.pread(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.pread(args)?));
                         },
                         "getrandom" => {
-                            operations.push(self.get_random(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.get_random(args)?));
                         },
                         "write" => {
-                            operations.push(self.write(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.write(args)?));
                         },
                         "mkdir" => {
-                            operations.push(self.mkdir(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.mkdir(args)?));
                         },
                         "unlinkat" => {
-                            operations.push(self.unlink(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.unlink(args)?));
                         },
                         "rename" => {
-                            operations.push(self.rename(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.rename(args)?));
                         },
                         op if op == "renameat" || op == "renameat2" => {
-                            operations.push(self.renameat(args)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.renameat(args)?));
                         },
                         "clone" => {
-                            operations.push(self.clone(ret)?);
-
-                            self.processes.get_mut(&pid)
-                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                            operations.push((pid, self.clone(ret)?));
                         },
                         _ => {}
                     }
@@ -225,9 +164,11 @@ impl Parser {
         }
 
         // remove no-ops
-        operations.retain(|op| op != &Operation::NoOp);
+        operations.retain(|(_, op)| op != &Operation::NoOp);
 
-        Ok(operations)
+        let mut order_manager = OrderManager::new(&operations);
+
+        Ok(order_manager.order())
     }
 
     // parse an openat line
@@ -944,10 +885,6 @@ impl Parser {
     // get the list of files and directories accessed during parsing the logs
     pub fn accessed_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
         Ok(self.files.clone())
-    }
-
-    pub fn processes_operations(&self) -> Result<HashMap<usize, Vec<i32>>, Box<dyn std::error::Error>> {
-        Ok(self.processes.clone())
     }
 }
 

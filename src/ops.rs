@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::Formatter;
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Operation {
     Read(String, i32, usize),          // args: path, offset, len
     Write(String, i32, usize, String), // args: path, offset, len, content
@@ -85,6 +85,48 @@ impl Operation {
     pub fn clone(pid: usize) -> Self {
         Operation::Clone(pid)
     }
+
+    pub fn path(&self) -> Option<String> {
+        match &self {
+            &Operation::Mkdir(path, _) => Some(path.clone()),
+            &Operation::Mknod(ref path) => Some(path.clone()),
+            &Operation::Remove(ref path) => Some(path.clone()),
+            &Operation::Read(ref path, _, _) => Some(path.clone()),
+            &Operation::Write(ref path, _, _, _) => Some(path.clone()),
+            &Operation::OpenAt(ref path, _) => Some(path.clone()),
+            &Operation::Truncate(ref path) => Some(path.clone()),
+            &Operation::GetRandom(_) => None,
+            &Operation::Stat(ref path) => Some(path.clone()),
+            &Operation::Fstat(ref path) => Some(path.clone()),
+            &Operation::Statx(ref path) => Some(path.clone()),
+            &Operation::StatFS(ref path) => Some(path.clone()),
+            &Operation::Fstatat(ref path) => Some(path.clone()),
+            &Operation::Rename(ref from, _) => Some(from.clone()),
+            &Operation::Clone(_) => None,
+            &Operation::NoOp => None,
+        }
+    }
+
+    pub fn name(&self) -> String {
+        match &self {
+            &Operation::Mkdir(_, _) => "Mkdir".to_string(),
+            &Operation::Mknod(_) => "Mknod".to_string(),
+            &Operation::Remove(_) => "Remove".to_string(),
+            &Operation::Read(_, _, _) => "Read".to_string(),
+            &Operation::Write(_, _, _, _) => "Write".to_string(),
+            &Operation::OpenAt(_, _) => "OpenAt".to_string(),
+            &Operation::Truncate(_) => "Truncate".to_string(),
+            &Operation::GetRandom(_) => "GetRandom".to_string(),
+            &Operation::Stat(_) => "Stat".to_string(),
+            &Operation::Fstat(_) => "Fstat".to_string(),
+            &Operation::Statx(_) => "Statx".to_string(),
+            &Operation::StatFS(_) => "StatFS".to_string(),
+            &Operation::Fstatat(_) => "Fstatat".to_string(),
+            &Operation::Rename(_, _) => "Rename".to_string(),
+            &Operation::Clone(_) => "Clone".to_string(),
+            &Operation::NoOp => "NoOp".to_string(),
+        }
+    }
 }
 
 impl fmt::Display for Operation {
@@ -109,8 +151,8 @@ impl fmt::Display for Operation {
             &Operation::Statx(ref path) => write!(f, "statx({})", path),
             &Operation::StatFS(ref path) => write!(f, "statfs({})", path),
             &Operation::Fstatat(ref path) => write!(f, "fstatat({})", path),
-            &Operation::Rename(ref old_path, ref new_path) => {
-                write!(f, "rename({} {})", old_path, new_path)
+            &Operation::Rename(ref from, ref to) => {
+                write!(f, "rename({} {})", from, to)
             }
             &Operation::Clone(ref pid) => write!(f, "clone({})", pid),
             &Operation::NoOp => write!(f, "no-op"),
