@@ -17,6 +17,7 @@ pub enum Operation {
     Statx(String),                     // args: path
     StatFS(String),                    // args: path
     Fstatat(String),                   // args: path
+    Clone(usize),                      // args: process id of the cloned process
     NoOp,
 }
 
@@ -80,6 +81,10 @@ impl Operation {
     pub fn rename(from: String, to: String) -> Self {
         Operation::Rename(from, to)
     }
+
+    pub fn clone(pid: usize) -> Self {
+        Operation::Clone(pid)
+    }
 }
 
 impl fmt::Display for Operation {
@@ -107,6 +112,7 @@ impl fmt::Display for Operation {
             &Operation::Rename(ref old_path, ref new_path) => {
                 write!(f, "rename({} {})", old_path, new_path)
             }
+            &Operation::Clone(ref pid) => write!(f, "clone({})", pid),
             &Operation::NoOp => write!(f, "no-op"),
         }
     }

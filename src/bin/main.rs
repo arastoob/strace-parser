@@ -28,5 +28,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", file_dir);
     }
 
+    println!("\noperations done by each process:");
+    let pid_op = parser.processes_operations()?;
+    for (pid, ops) in pid_op {
+        println!("pid: {}, ops: {:?}", pid, ops);
+    }
+
     Ok(())
 }
