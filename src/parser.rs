@@ -210,6 +210,12 @@ impl Parser {
                             self.processes.get_mut(&pid)
                                 .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
                         },
+                        "clone" => {
+                            operations.push(self.clone(ret)?);
+
+                            self.processes.get_mut(&pid)
+                                .ok_or(Error::NotFound(format!("process id {}", pid)))?.push((operations.len() - 1) as i32);
+                        },
                         _ => {}
                     }
                 }
@@ -762,6 +768,22 @@ impl Parser {
         Ok(Operation::get_random(len))
     }
 
+    // parse a clone line
+    fn clone(&mut self, ret: String) -> Result<Operation, Box<dyn std::error::Error>> {
+        // int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...
+        //                  /* pid_t *parent_tid, void *tls, pid_t *child_tid */ );
+        // create a new ("child") process, in a manner similar to fork(2).
+        //
+        // Example:
+        //  clone(child_stack=0x7fb239306f30,
+        //        flags=CLONE_VM|CLONE_FS|CLONE_FILES|CLONE_SIGHAND|CLONE_THREAD|CLONE_SYSVSEM|
+        //        CLONE_SETTLS|CLONE_PARENT_SETTID|CLONE_CHILD_CLEARTID,
+        //        parent_tid=[909193], tls=0x7fb239307700, child_tidptr=0x7fb2393079d0) = 909193
+
+        let ret = ret.trim().parse::<usize>()?;
+        Ok(Operation::clone(ret))
+    }
+
     // extract process id, operation name, input args in-between ( and ), and return value from the input string
     fn parts(&mut self, str: &str) -> Result<Parts, Box<dyn std::error::Error>> {
 
@@ -829,6 +851,7 @@ impl Parser {
         }
     }
 
+    // check the existance of the process id in the beginning of a line
     fn has_pid(&self, str: &str) -> Result<bool, Box<dyn std::error::Error>> {
         let re = Regex::new(r"^(?P<pid>\d+) (?P<remaining>.+)$")?;
         Ok(re.is_match(str))
@@ -852,6 +875,7 @@ impl Parser {
             .to_string())
     }
 
+    // convert a relative path to absolute
     fn relative_to_absolute(
         &self,
         dirfd: &str,
@@ -917,6 +941,7 @@ impl Parser {
         }
     }
 
+    // get the list of files and directories accessed during parsing the logs
     pub fn accessed_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
         Ok(self.files.clone())
     }
