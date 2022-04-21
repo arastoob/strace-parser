@@ -122,11 +122,6 @@ impl OrderManager {
 
 #[cfg(test)]
 mod test {
-    use petgraph::{Directed, Graph, Incoming, Outgoing};
-    use petgraph::data::FromElements;
-    use petgraph::graph::NodeIndex;
-    use petgraph::prelude::{DiGraph, EdgeRef};
-    use petgraph::visit::{EdgeIndexable, IntoNeighbors, IntoNeighborsDirected, NodeIndexable, NodeRef};
     use crate::Operation;
     use crate::order_manager::OrderManager;
 

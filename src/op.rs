@@ -3,7 +3,7 @@ use std::fmt::Formatter;
 use std::rc::Rc;
 use crate::file::File;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub enum Operation1 {
     Read(Rc<File>, i32, usize),          // args: FileDir, offset, len
     Write(Rc<File>, i32, usize, String), // args: FileDir, offset, len, content
@@ -88,26 +88,26 @@ impl Operation1 {
         Operation1::Clone(pid)
     }
 
-    // pub fn path(&self) -> Option<String> {
-    //     match &self {
-    //         &Operation1::Mkdir(path, _) => Some(path.clone()),
-    //         &Operation1::Mknod(ref path) => Some(path.clone()),
-    //         &Operation1::Remove(ref FileDir) => Some(FileDir.path()),
-    //         &Operation1::Read(ref path, _, _) => Some(path.clone()),
-    //         &Operation1::Write(ref path, _, _, _) => Some(path.clone()),
-    //         &Operation1::OpenAt(ref path, _) => Some(path.clone()),
-    //         &Operation1::Truncate(ref path) => Some(path.clone()),
-    //         &Operation1::GetRandom(_) => None,
-    //         &Operation1::Stat(ref path) => Some(path.clone()),
-    //         &Operation1::Fstat(ref path) => Some(path.clone()),
-    //         &Operation1::Statx(ref path) => Some(path.clone()),
-    //         &Operation1::StatFS(ref path) => Some(path.clone()),
-    //         &Operation1::Fstatat(ref path) => Some(path.clone()),
-    //         &Operation1::Rename(ref from, _) => Some(from.clone()),
-    //         &Operation1::Clone(_) => None,
-    //         &Operation1::NoOp => None,
-    //     }
-    // }
+    pub fn file(&self) -> Option<Rc<File>> {
+        match &self {
+            &Operation1::Mkdir(file, _) => Some(file.clone()),
+            &Operation1::Mknod(file) => Some(file.clone()),
+            &Operation1::Remove(file) => Some(file.clone()),
+            &Operation1::Read(file, _, _) => Some(file.clone()),
+            &Operation1::Write(file, _, _, _) => Some(file.clone()),
+            &Operation1::OpenAt(file, _) => Some(file.clone()),
+            &Operation1::Truncate(file) => Some(file.clone()),
+            &Operation1::GetRandom(_) => None,
+            &Operation1::Stat(file) => Some(file.clone()),
+            &Operation1::Fstat(file) => Some(file.clone()),
+            &Operation1::Statx(file) => Some(file.clone()),
+            &Operation1::StatFS(file) => Some(file.clone()),
+            &Operation1::Fstatat(file) => Some(file.clone()),
+            &Operation1::Rename(file, _) => Some(file.clone()),
+            &Operation1::Clone(_) => None,
+            &Operation1::NoOp => None,
+        }
+    }
 
     pub fn name(&self) -> String {
         match &self {

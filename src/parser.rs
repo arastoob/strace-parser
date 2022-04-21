@@ -1,21 +1,26 @@
+use std::cell::RefCell;
 use crate::error::Error;
 use crate::ops::Operation;
-use crate::order_manager::OrderManager;
 use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
-use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::rc::Rc;
 use regex::Regex;
+use crate::file::File;
+use crate::op::Operation1;
+use crate::process::Process;
 
 pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
-    files: HashSet<FileDir>, // keep existing files' size
+    existing_files: HashSet<FileDir>, // keep existing files info
+    accessed_files: HashMap<String, Rc<File>>, // all the files and directories accessed by processes
+    // processes: HashMap<pid, Process>,
     ongoing_ops: HashMap<usize, String> // keeping the unfinished operations for each process
 }
 
-#[derive(Clone, Eq, Hash, PartialEq)]
+#[derive(Debug, Clone, Eq, Hash, PartialEq)]
 pub enum FileDir {
     File(String, usize), // file path and size
     Dir(String, usize),  // directory path and size
@@ -70,15 +75,17 @@ impl Parser {
         Parser {
             log_file,
             fd_map: HashMap::new(),
-            files: HashSet::new(),
+            existing_files: HashSet::new(),
+            accessed_files: HashMap::new(),
+            // processes: HashMap::new(),
             ongoing_ops: HashMap::new()
         }
     }
 
     pub fn parse(&mut self) -> Result<(Vec<(usize, Operation)>, Vec<(usize, Operation)>), Box<dyn std::error::Error>> {
-        let mut operations = vec![];
+        let mut processes: HashMap<usize, Rc<RefCell<Process>>> = HashMap::new();
 
-        let file = File::open(self.log_file.clone())?;
+        let file = std::fs::File::open(self.log_file.clone())?;
         let reader = BufReader::new(file);
 
         for line in reader.lines() {
@@ -103,57 +110,84 @@ impl Parser {
             match self.parts(&line)? {
                 Parts::Unfinished(_, _) => continue,
                 Parts::Finished(pid, op, args, ret) => {
+                    let process = match processes.get(&pid) {
+                        Some(p) => {
+                            p.clone()
+                        },
+                        None => {
+                            let p = Rc::new(RefCell::new(Process::new(pid)));
+                            processes.insert(pid, p.clone());
+                            p
+                        }
+                    };
+
                     match op.as_ref() {
                         "openat" => {
                             for operation in self.openat(args, ret)? {
-                                operations.push((pid, operation));
+                                // operations.push((pid, operation));
+                                process.borrow_mut().add_op(operation);
                             }
                         },
                         "fcntl" => {
-                            operations.push((pid, self.fcntl(args, ret)?));
+                            // operations.push((pid, self.fcntl(args, ret)?));
+                            process.borrow_mut().add_op(self.fcntl(args, ret)?);
                         },
                         "read" => {
                             // read op updates the file offset
-                            operations.push((pid, self.read(args)?));
+                            // operations.push((pid, self.read(args)?));
+                            process.borrow_mut().add_op(self.read(args)?);
                         },
                         "stat" => {
-                            operations.push((pid, self.stat(args)?));
+                            // operations.push((pid, self.stat(args)?));
+                            process.borrow_mut().add_op(self.stat(args)?);
                         },
                         "fstat" => {
-                            operations.push((pid, self.fstat(args)?));
+                            // operations.push((pid, self.fstat(args)?));
+                            process.borrow_mut().add_op(self.fstat(args)?);
                         },
                         "statx" => {
-                            operations.push((pid, self.statx(args)?));
+                            // operations.push((pid, self.statx(args)?));
+                            process.borrow_mut().add_op(self.statx(args)?);
                         },
                         "statfs" => {
-                            operations.push((pid, self.statfs(args)?));
+                            // operations.push((pid, self.statfs(args)?));
+                            process.borrow_mut().add_op(self.statfs(args)?);
                         },
                         op if op == "fstatat64" || op == "newfstatat" || op == "fstatat" => {
-                            operations.push((pid, self.fstatat(args)?));
+                            // operations.push((pid, self.fstatat(args)?));
+                            process.borrow_mut().add_op(self.fstatat(args)?);
                         },
                         "pread" => {
-                            operations.push((pid, self.pread(args)?));
+                            // operations.push((pid, self.pread(args)?));
+                            process.borrow_mut().add_op(self.pread(args)?);
                         },
                         "getrandom" => {
-                            operations.push((pid, self.get_random(args)?));
+                            // operations.push((pid, self.get_random(args)?));
+                            process.borrow_mut().add_op(self.get_random(args)?);
                         },
                         "write" => {
-                            operations.push((pid, self.write(args)?));
+                            // operations.push((pid, self.write(args)?));
+                            process.borrow_mut().add_op(self.write(args)?);
                         },
                         "mkdir" => {
-                            operations.push((pid, self.mkdir(args)?));
+                            // operations.push((pid, self.mkdir(args)?));
+                            process.borrow_mut().add_op(self.mkdir(args)?);
                         },
                         "unlinkat" => {
-                            operations.push((pid, self.unlink(args)?));
+                            // operations.push((pid, self.unlink(args)?));
+                            process.borrow_mut().add_op(self.unlink(args)?);
                         },
                         "rename" => {
-                            operations.push((pid, self.rename(args)?));
+                            // operations.push((pid, self.rename(args)?));
+                            process.borrow_mut().add_op(self.rename(args)?);
                         },
                         op if op == "renameat" || op == "renameat2" => {
-                            operations.push((pid, self.renameat(args)?));
+                            // operations.push((pid, self.renameat(args)?));
+                            process.borrow_mut().add_op(self.renameat(args)?);
                         },
                         "clone" => {
-                            operations.push((pid, self.clone(ret)?));
+                            // operations.push((pid, self.clone(ret)?));
+                            process.borrow_mut().add_op(self.clone(ret)?);
                         },
                         _ => {}
                     }
@@ -163,16 +197,14 @@ impl Parser {
 
         }
 
-        // remove no-ops
-        operations.retain(|(_, op)| op != &Operation::NoOp);
 
-        let mut order_manager = OrderManager::new(&operations);
+        // let mut order_manager = OrderManager::new(&operations);
 
-        Ok(order_manager.order())
+        Ok((vec![], vec![]))
     }
 
     // parse an openat line
-    fn openat(&mut self, args: String, ret: String) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
+    fn openat(&mut self, args: String, ret: String) -> Result<Vec<Operation1>, Box<dyn std::error::Error>> {
         //
         // int openat(int dirfd, const char *path, int flags, mode_t mode);
         //
@@ -234,11 +266,11 @@ impl Parser {
         let mut operations = vec![];
 
         if flags.contains("O_CREAT") {
-            operations.push(Operation::mknod(path.clone()));
+            operations.push(Operation1::mknod(self.file(&path).clone()));
         }
 
         if flags.contains("O_TRUNC") {
-            operations.push(Operation::truncate(path.clone()));
+            operations.push(Operation1::truncate(self.file(&path).clone()));
 
             self.fd_map.insert(fd, OpenedFile::new(path.clone(), 0, 0));
         }
@@ -267,13 +299,13 @@ impl Parser {
         };
 
         // finally, create the openat operation
-        operations.push(Operation::open_at(offset, path));
+        operations.push(Operation1::open_at(self.file(&path).clone(), offset));
 
         Ok(operations)
     }
 
     // parse a fcntl line
-    fn fcntl(&mut self, args: String, ret: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fcntl(&mut self, args: String, ret: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int fcntl(int fd, int cmd, ... /* arg */ );
         // performs one of the operations on the open file descriptor fd.  The operation is determined by cmd.
         //
@@ -313,11 +345,11 @@ impl Parser {
                 .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
         }
 
-        Ok(Operation::no_op())
+        Ok(Operation1::no_op())
     }
 
     // parse a read line
-    fn read(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn read(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // ssize_t read(int fd, void *buf, size_t count);
         // attempts to read up to count bytes from file descriptor fd into the buffer starting at buf.
         //
@@ -341,19 +373,19 @@ impl Parser {
                 self.fd_map
                     .insert(fd, OpenedFile::new(path.clone(), offset + len as i32, size));
 
-                Ok(Operation::read(len, offset, path))
+                Ok(Operation1::read(self.file(&path).clone(), len, offset))
             }
             None => {
                 // For some reason the fd is not available. One case is having an operation
                 // like ioctl(fd, ...) followed by a read(4, ...) operation.
                 // We are not tracking hardware-specific calls.
-                Ok(Operation::no_op())
+                Ok(Operation1::no_op())
             }
         }
     }
 
     // parse a stat line
-    fn stat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn stat(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int stat(const char *pathname, struct stat *statbuf);
         // display file or file system status.
         //
@@ -366,13 +398,13 @@ impl Parser {
         let path = self.path(&args, "stat")?;
 
         let file_dir = self.file_dir(&args, &path, "stat")?;
-        self.files.insert(file_dir);
+        self.existing_files.insert(file_dir);
 
-        Ok(Operation::stat(path))
+        Ok(Operation1::stat(self.file(&path).clone()))
     }
 
     // parse a fstat line
-    fn fstat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -392,16 +424,16 @@ impl Parser {
                 let path = opend_file.path.clone();
 
                 let file_dir = self.file_dir(&args, &path, "fstat")?;
-                self.files.insert(file_dir);
+                self.existing_files.insert(file_dir);
 
-                Ok(Operation::fstat(path))
+                Ok(Operation1::fstat(self.file(&path).clone()))
             }
-            None => Ok(Operation::no_op()),
+            None => Ok(Operation1::no_op()),
         }
     }
 
     // parse a statx line
-    fn statx(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn statx(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int statx(int dirfd, const char *pathname, int flags,
         //                  unsigned int mask, struct statx *statxbuf);
         //  returns information about a file, storing it in the buffer pointed to by statxbuf.
@@ -437,13 +469,13 @@ impl Parser {
         }
 
         let file_dir = self.file_dir(&args, &path, "statx")?;
-        self.files.insert(file_dir);
+        self.existing_files.insert(file_dir);
 
-        Ok(Operation::statx(path))
+        Ok(Operation1::statx(self.file(&path).clone()))
     }
 
     // parse a fstatat line
-    fn fstatat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstatat(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int fstatat(int dirfd, const char *pathname, struct stat *statbuf,
         //                    int flags);
         //  return information about a file, in the buffer pointed to by statbuf
@@ -479,13 +511,13 @@ impl Parser {
         }
 
         let file_dir = self.file_dir(&args, &path, "fstatat")?;
-        self.files.insert(file_dir);
+        self.existing_files.insert(file_dir);
 
-        Ok(Operation::fstatat(path))
+        Ok(Operation1::fstatat(self.file(&path).clone()))
     }
 
     // parse a statfs line
-    fn statfs(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn statfs(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int statfs(const char *path, struct statfs *buf);
         // returns information about a mounted filesystem
         //
@@ -500,11 +532,11 @@ impl Parser {
         // extract the path from input arguments
         let path = self.path(&args, "statfs")?;
 
-        Ok(Operation::statfs(path))
+        Ok(Operation1::statfs(self.file(&path).clone()))
     }
 
     // parse a read line
-    fn pread(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn pread(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // ssize_t pread(int fd, void *buf, size_t count, off_t offset);
         // reads  up  to  count  bytes from file descriptor fd at offset offset
         // (from the start of the file) into the buffer starting at buf.  The file offset is not changed.
@@ -522,18 +554,18 @@ impl Parser {
 
         // find the read path based on the file descriptor
         match self.fd_map.get(&fd) {
-            Some(opend_file) => Ok(Operation::read(len, offset, opend_file.path.clone())),
+            Some(opend_file) => Ok(Operation1::read(self.file(&opend_file.path).clone(), len, offset)),
             None => {
                 // For some reason the fd is not available. One case is having an operation
                 // like ioctl(fd, ...) followed by a read(4, ...) operation.
                 // We are not tracking hardware-specific calls.
-                Ok(Operation::no_op())
+                Ok(Operation1::no_op())
             }
         }
     }
 
     // parse a write line
-    fn write(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn write(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // ssize_t write(int fd, const void *buf, size_t count);
         // writes up to count bytes from the buffer starting at buf to the file referred to
         // by the file descriptor fd.
@@ -548,7 +580,7 @@ impl Parser {
 
         if fd == 0 || fd == 1 || fd == 2 {
             // write to stdin, or stdout, or stderr
-            return Ok(Operation::no_op());
+            return Ok(Operation1::no_op());
         }
 
         // find the write path based on the file descriptor
@@ -558,7 +590,7 @@ impl Parser {
                 let offset = of.offset;
                 let size = of.size;
 
-                let op = Operation::write(content, len, offset, path.clone());
+                let op = Operation1::write(self.file(&path).clone(), content, len, offset);
 
                 // update the offset and size of the opened file in the fd_map
                 self.fd_map
@@ -569,13 +601,13 @@ impl Parser {
             None => {
                 // as the file descriptor does not exist, the write operation is probably writing
                 // to the STDOUT, so do not generate an operation
-                Ok(Operation::no_op())
+                Ok(Operation1::no_op())
             }
         }
     }
 
     // parse a write line
-    fn mkdir(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn mkdir(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int mkdir(const char *pathname, mode_t mode);
         // attempts to create a directory named pathname.
         //
@@ -590,11 +622,11 @@ impl Parser {
             .1
             .trim();
 
-        Ok(Operation::mkdir(path, mode.to_string()))
+        Ok(Operation1::mkdir(self.file(&path).clone(), mode.to_string()))
     }
 
     // parse a unlink line
-    fn unlink(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn unlink(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int unlinkat(int dirfd, const char *pathname, int flags);
         // deletes a name from the filesystem.  If that name was the last link to a file and no
         // processes have the file open, the file is deleted and the space it was using is made
@@ -629,11 +661,11 @@ impl Parser {
             }
         }
 
-        Ok(Operation::remove(path))
+        Ok(Operation1::remove(self.file(&path).clone()))
     }
 
     // parse a rename line
-    fn rename(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn rename(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int rename(const char *oldpath, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -651,11 +683,11 @@ impl Parser {
         let old = self.path(&old, "rename")?;
         let new = self.path(&new, "rename")?;
 
-        Ok(Operation::rename(old, new))
+        Ok(Operation1::rename(self.file(&old).clone(), new))
     }
 
     // parse a renameat line
-    fn renameat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn renameat(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -690,11 +722,11 @@ impl Parser {
             new = self.relative_to_absolute(dirfd2, &new)?;
         }
 
-        Ok(Operation::rename(old, new))
+        Ok(Operation1::rename(self.file(&old).clone(), new))
     }
 
     // parse a getrandom line
-    fn get_random(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn get_random(&mut self, args: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // ssize_t getrandom(void *buf, size_t buflen, unsigned int flags);
         // fills the buffer pointed to by buf with up to buflen random bytes.
         //
@@ -706,11 +738,11 @@ impl Parser {
         let len = parts[1].trim().parse::<usize>()?;
         let _flags = parts[parts.len() - 1].trim().to_string();
 
-        Ok(Operation::get_random(len))
+        Ok(Operation1::get_random(len))
     }
 
     // parse a clone line
-    fn clone(&mut self, ret: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn clone(&mut self, ret: String) -> Result<Operation1, Box<dyn std::error::Error>> {
         // int clone(int (*fn)(void *), void *stack, int flags, void *arg, ...
         //                  /* pid_t *parent_tid, void *tls, pid_t *child_tid */ );
         // create a new ("child") process, in a manner similar to fork(2).
@@ -722,7 +754,16 @@ impl Parser {
         //        parent_tid=[909193], tls=0x7fb239307700, child_tidptr=0x7fb2393079d0) = 909193
 
         let ret = ret.trim().parse::<usize>()?;
-        Ok(Operation::clone(ret))
+        Ok(Operation1::clone(ret))
+    }
+
+    fn file(&self, path: &str) -> Rc<File> {
+        match self.accessed_files.get(path) {
+            Some(f) => f.clone(),
+            None => {
+                Rc::new(File::new(path))
+            }
+        }
     }
 
     // extract process id, operation name, input args in-between ( and ), and return value from the input string
@@ -882,375 +923,375 @@ impl Parser {
         }
     }
 
-    // get the list of files and directories accessed during parsing the logs
-    pub fn accessed_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
-        Ok(self.files.clone())
+    // get the list of existing files and directories accessed during log parsing
+    pub fn existing_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
+        Ok(self.existing_files.clone())
     }
 }
 
-#[cfg(test)]
-mod test {
-    use crate::parser::{Parser, Parts};
-    use crate::Operation;
-    use std::path::PathBuf;
-
-
-    #[test]
-    fn parts() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let str =  "909194 openat(AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC) = 3";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "openat".to_string(), "AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC".to_string(), "3".to_string()));
-
-        let str =  "909194 close(3)                                = 0";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "close".to_string(), "3".to_string(), "0".to_string()));
-
-
-        let str =  "909194 statx(AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30) = -1 ENOENT (No such file or directory)";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "statx".to_string(), "AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30".to_string(), "-1".to_string()));
-
-        let str = "909194 renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "renameat2".to_string(), "AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE".to_string(), "0".to_string()));
-
-
-        let str = "909194 getrandom( <unfinished ...>";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Unfinished(909194, "getrandom( <unfinished ...>".to_string()));
-
-        let str = "909194 <... getrandom resumed>NULL, 0, GRND_NONBLOCK) = 0";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "getrandom".to_string(), "NULL, 0, GRND_NONBLOCK".to_string(), "0".to_string()));
-
-
-        let str = "909194 openat(AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666 <unfinished ...>";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Unfinished(909194, "openat(AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666 <unfinished ...>".to_string()));
-
-        let str = "909194 <... openat resumed>)            = 5";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "openat".to_string(), "AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666".to_string(), "5".to_string()));
-
-
-        let str = "909194 write(5, a-(buf, 4096 <unfinished ...>";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Unfinished(909194, "write(5, a-(buf, 4096 <unfinished ...>".to_string()));
-
-        let str = "909194 <... write resumed>)             = 4096";
-        let parts = parser.parts(str.as_ref())?;
-        assert_eq!(parts, Parts::Finished(909194, "write".to_string(), "5, a-(buf, 4096".to_string(), "4096".to_string()));
-
-
-
-        Ok(())
-    }
-
-    #[test]
-    fn openat() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let line = "909193 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
-            assert_eq!(operations.len(), 1);
-            assert_eq!(
-                operations
-                    .get(0)
-                    .expect("failed to read the first entry of the vector"),
-                &Operation::OpenAt("a_path".to_string(), 0)
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-
-    
-        let line =
-            "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
-            assert_eq!(operations.len(), 2);
-            assert_eq!(
-                operations
-                    .get(0)
-                    .expect("failed to read the first entry of the vector"),
-                &Operation::Mknod("another_path".to_string())
-            );
-            assert_eq!(
-                operations
-                    .get(1)
-                    .expect("failed to read the second entry of the vector"),
-                &Operation::OpenAt("another_path".to_string(), 0)
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        let line =
-            "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7"
-                .to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
-            assert_eq!(operations.len(), 3);
-            assert_eq!(
-                operations
-                    .get(0)
-                    .expect("failed to read the first entry of the vector"),
-                &Operation::Mknod("another_path".to_string())
-            );
-            assert_eq!(
-                operations
-                    .get(1)
-                    .expect("failed to read the second entry of the vector"),
-                &Operation::Truncate("another_path".to_string())
-            );
-            assert_eq!(
-                operations
-                    .get(2)
-                    .expect("failed to read the third entry of the vector"),
-                &Operation::OpenAt("another_path".to_string(), 0)
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-    
-        Ok(())
-    }
-    
-    #[test]
-    fn read() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
-            let _operation = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", openat_line));
-        }
-
-        let read_line1 = "909196 read(3, buf, 50) = 50".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
-            let read_op1 = parser.read(args)?;
-            assert_eq!(read_op1, Operation::Read("a_path".to_string(), 0, 50));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", read_line1));
-        }
-
-        let read_line2 = "909196 read(3, buf, 20) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
-            let read_op2 = parser.read(args)?;
-            assert_eq!(read_op2, Operation::Read("a_path".to_string(), 50, 20));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", read_line2));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn pread() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
-            let _operation = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", openat_line));
-        }
-
-        let read_line1 = "909196 pread(3, buf, 50, 100) = 50".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
-        let pread_op1 = parser.pread(args)?;
-        assert_eq!(pread_op1, Operation::Read("a_path".to_string(), 100, 50));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", read_line1));
-        }
-
-        let read_line2 = "909196 pread(3, buf, 20, 500) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
-            let pread_op2 = parser.pread(args)?;
-            assert_eq!(pread_op2, Operation::Read("a_path".to_string(), 500, 20));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", read_line2));
-        }
-
-        // the previous pread ops should not update the opened file offset
-        let read_line3 = "909196 read(3, buf, 20) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line3)? {
-            let read_op = parser.read(args)?;
-            assert_eq!(read_op, Operation::Read("a_path".to_string(), 0, 20));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", read_line3));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn write() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        // first write
-        let write_line1 = "909196 write(5, some content here, 17) = 17".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line1)? {
-            let write_op1 = parser.write(args)?;
-            assert_eq!(
-                write_op1,
-                Operation::Write("a_path".to_string(), 0, 17, "some content here".to_string())
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", write_line1));
-        }
-
-        // second write
-        let write_line2 = "909196 write(5, hello, 5) = 5".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
-            let write_op2 = parser.write(args)?;
-            assert_eq!(
-                write_op2,
-                Operation::Write("a_path".to_string(), 17, 5, "hello".to_string())
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", write_line2));
-        }
-
-        // open the file one more time to check the offset
-        let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        // now open the file with truncate flag, which should zero the size and offset
-        let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_TRUNC) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        // write after truncate
-        let write_line2 = "909196 write(5, some other content here, 10) = 10".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
-            let write_op2 = parser.write(args)?;
-            assert_eq!(
-                write_op2,
-                Operation::Write(
-                    "a_path".to_string(),
-                    0,
-                    10,
-                    "some other content here".to_string()
-                )
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", write_line2));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn get_random() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let line = "909196 getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
-            let operation = parser.get_random(args)?;
-            assert_eq!(operation, Operation::GetRandom(16));
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn fstat() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
-            println!("args: {}", args);
-            let _operation = parser.openat(args, ret)?;
-        } else {
-            panic!("{}", format!("could not get the parts from {}", openat_line));
-        }
-
-        let fstat_line = "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&fstat_line)? {
-            let fstat_op = parser.fstat(args)?;
-            assert_eq!(fstat_op, Operation::Fstat("a_path".to_string()));
-
-            assert_eq!(parser.files.len(), 1);
-            let file_size = parser
-                .files
-                .iter()
-                .next()
-                .expect("failed to get the first element from hashset")
-                .size();
-            assert_eq!(*file_size, 95921 as usize);
-        } else {
-            panic!("{}", format!("could not get the parts from {}", fstat_line));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn mkdir() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-
-        let mkdir_line = "909196 mkdir(\"a_path\", 0777) = 0".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&mkdir_line)? {
-            let mkdir_op = parser.mkdir(args)?;
-            assert_eq!(
-                mkdir_op,
-                Operation::Mkdir("a_path".to_string(), "0777".to_string())
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", mkdir_line));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn rename() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let line = "909196 rename(\"old_path\", \"new_path\") = 0".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
-            let operation = parser.rename(args)?;
-            assert_eq!(
-                operation,
-                Operation::Rename("old_path".to_string(), "new_path".to_string())
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        Ok(())
-    }
-
-    #[test]
-    fn renameat() -> Result<(), Box<dyn std::error::Error>> {
-        let mut parser = Parser::new(PathBuf::new());
-        let line =
-            "909196 renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0"
-                .to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
-            let operation = parser.renameat(args)?;
-            assert_eq!(
-                operation,
-                Operation::Rename("old_path".to_string(), "new_path".to_string())
-            );
-        } else {
-            panic!("{}", format!("could not get the parts from {}", line));
-        }
-
-        Ok(())
-    }
-}
+// #[cfg(test)]
+// mod test {
+//     use crate::parser::{Parser, Parts};
+//     use crate::Operation;
+//     use std::path::PathBuf;
+//
+//
+//     #[test]
+//     fn parts() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let str =  "909194 openat(AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC) = 3";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "openat".to_string(), "AT_FDCWD, \"/proc/self/cgroup\", O_RDONLY|O_CLOEXEC".to_string(), "3".to_string()));
+//
+//         let str =  "909194 close(3)                                = 0";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "close".to_string(), "3".to_string(), "0".to_string()));
+//
+//
+//         let str =  "909194 statx(AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30) = -1 ENOENT (No such file or directory)";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "statx".to_string(), "AT_FDCWD, \"a-path\", AT_STATX_SYNC_AS_STAT, STATX_ALL, 0x7ffeaceb9e30".to_string(), "-1".to_string()));
+//
+//         let str = "909194 renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "renameat2".to_string(), "AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE".to_string(), "0".to_string()));
+//
+//
+//         let str = "909194 getrandom( <unfinished ...>";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Unfinished(909194, "getrandom( <unfinished ...>".to_string()));
+//
+//         let str = "909194 <... getrandom resumed>NULL, 0, GRND_NONBLOCK) = 0";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "getrandom".to_string(), "NULL, 0, GRND_NONBLOCK".to_string(), "0".to_string()));
+//
+//
+//         let str = "909194 openat(AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666 <unfinished ...>";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Unfinished(909194, "openat(AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666 <unfinished ...>".to_string()));
+//
+//         let str = "909194 <... openat resumed>)            = 5";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "openat".to_string(), "AT_FDCWD, \"a-path\", O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC, 0666".to_string(), "5".to_string()));
+//
+//
+//         let str = "909194 write(5, a-(buf, 4096 <unfinished ...>";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Unfinished(909194, "write(5, a-(buf, 4096 <unfinished ...>".to_string()));
+//
+//         let str = "909194 <... write resumed>)             = 4096";
+//         let parts = parser.parts(str.as_ref())?;
+//         assert_eq!(parts, Parts::Finished(909194, "write".to_string(), "5, a-(buf, 4096".to_string(), "4096".to_string()));
+//
+//
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn openat() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let line = "909193 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let operations = parser.openat(args, ret)?;
+//             assert_eq!(operations.len(), 1);
+//             assert_eq!(
+//                 operations
+//                     .get(0)
+//                     .expect("failed to read the first entry of the vector"),
+//                 &Operation::OpenAt("a_path".to_string(), 0)
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//
+//
+//         let line =
+//             "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let operations = parser.openat(args, ret)?;
+//             assert_eq!(operations.len(), 2);
+//             assert_eq!(
+//                 operations
+//                     .get(0)
+//                     .expect("failed to read the first entry of the vector"),
+//                 &Operation::Mknod("another_path".to_string())
+//             );
+//             assert_eq!(
+//                 operations
+//                     .get(1)
+//                     .expect("failed to read the second entry of the vector"),
+//                 &Operation::OpenAt("another_path".to_string(), 0)
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         let line =
+//             "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7"
+//                 .to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let operations = parser.openat(args, ret)?;
+//             assert_eq!(operations.len(), 3);
+//             assert_eq!(
+//                 operations
+//                     .get(0)
+//                     .expect("failed to read the first entry of the vector"),
+//                 &Operation::Mknod("another_path".to_string())
+//             );
+//             assert_eq!(
+//                 operations
+//                     .get(1)
+//                     .expect("failed to read the second entry of the vector"),
+//                 &Operation::Truncate("another_path".to_string())
+//             );
+//             assert_eq!(
+//                 operations
+//                     .get(2)
+//                     .expect("failed to read the third entry of the vector"),
+//                 &Operation::OpenAt("another_path".to_string(), 0)
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn read() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
+//             let _operation = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", openat_line));
+//         }
+//
+//         let read_line1 = "909196 read(3, buf, 50) = 50".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
+//             let read_op1 = parser.read(args)?;
+//             assert_eq!(read_op1, Operation::Read("a_path".to_string(), 0, 50));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", read_line1));
+//         }
+//
+//         let read_line2 = "909196 read(3, buf, 20) = 20".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
+//             let read_op2 = parser.read(args)?;
+//             assert_eq!(read_op2, Operation::Read("a_path".to_string(), 50, 20));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", read_line2));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn pread() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
+//             let _operation = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", openat_line));
+//         }
+//
+//         let read_line1 = "909196 pread(3, buf, 50, 100) = 50".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
+//         let pread_op1 = parser.pread(args)?;
+//         assert_eq!(pread_op1, Operation::Read("a_path".to_string(), 100, 50));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", read_line1));
+//         }
+//
+//         let read_line2 = "909196 pread(3, buf, 20, 500) = 20".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
+//             let pread_op2 = parser.pread(args)?;
+//             assert_eq!(pread_op2, Operation::Read("a_path".to_string(), 500, 20));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", read_line2));
+//         }
+//
+//         // the previous pread ops should not update the opened file offset
+//         let read_line3 = "909196 read(3, buf, 20) = 20".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line3)? {
+//             let read_op = parser.read(args)?;
+//             assert_eq!(read_op, Operation::Read("a_path".to_string(), 0, 20));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", read_line3));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn write() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let _operations = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         // first write
+//         let write_line1 = "909196 write(5, some content here, 17) = 17".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line1)? {
+//             let write_op1 = parser.write(args)?;
+//             assert_eq!(
+//                 write_op1,
+//                 Operation::Write("a_path".to_string(), 0, 17, "some content here".to_string())
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", write_line1));
+//         }
+//
+//         // second write
+//         let write_line2 = "909196 write(5, hello, 5) = 5".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
+//             let write_op2 = parser.write(args)?;
+//             assert_eq!(
+//                 write_op2,
+//                 Operation::Write("a_path".to_string(), 17, 5, "hello".to_string())
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", write_line2));
+//         }
+//
+//         // open the file one more time to check the offset
+//         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let _operations = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         // now open the file with truncate flag, which should zero the size and offset
+//         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_TRUNC) = 5".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
+//             let _operations = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         // write after truncate
+//         let write_line2 = "909196 write(5, some other content here, 10) = 10".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
+//             let write_op2 = parser.write(args)?;
+//             assert_eq!(
+//                 write_op2,
+//                 Operation::Write(
+//                     "a_path".to_string(),
+//                     0,
+//                     10,
+//                     "some other content here".to_string()
+//                 )
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", write_line2));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn get_random() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let line = "909196 getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
+//             let operation = parser.get_random(args)?;
+//             assert_eq!(operation, Operation::GetRandom(16));
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn fstat() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+//         if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
+//             println!("args: {}", args);
+//             let _operation = parser.openat(args, ret)?;
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", openat_line));
+//         }
+//
+//         let fstat_line = "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&fstat_line)? {
+//             let fstat_op = parser.fstat(args)?;
+//             assert_eq!(fstat_op, Operation::Fstat("a_path".to_string()));
+//
+//             assert_eq!(parser.existing_files.len(), 1);
+//             let file_size = parser
+//                 .existing_files
+//                 .iter()
+//                 .next()
+//                 .expect("failed to get the first element from hashset")
+//                 .size();
+//             assert_eq!(*file_size, 95921 as usize);
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", fstat_line));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn mkdir() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//
+//         let mkdir_line = "909196 mkdir(\"a_path\", 0777) = 0".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&mkdir_line)? {
+//             let mkdir_op = parser.mkdir(args)?;
+//             assert_eq!(
+//                 mkdir_op,
+//                 Operation::Mkdir("a_path".to_string(), "0777".to_string())
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", mkdir_line));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn rename() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let line = "909196 rename(\"old_path\", \"new_path\") = 0".to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
+//             let operation = parser.rename(args)?;
+//             assert_eq!(
+//                 operation,
+//                 Operation::Rename("old_path".to_string(), "new_path".to_string())
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         Ok(())
+//     }
+//
+//     #[test]
+//     fn renameat() -> Result<(), Box<dyn std::error::Error>> {
+//         let mut parser = Parser::new(PathBuf::new());
+//         let line =
+//             "909196 renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0"
+//                 .to_string();
+//         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
+//             let operation = parser.renameat(args)?;
+//             assert_eq!(
+//                 operation,
+//                 Operation::Rename("old_path".to_string(), "new_path".to_string())
+//             );
+//         } else {
+//             panic!("{}", format!("could not get the parts from {}", line));
+//         }
+//
+//         Ok(())
+//     }
+// }
