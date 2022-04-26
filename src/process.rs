@@ -1,11 +1,12 @@
-use std::collections::HashSet;
-use std::hash::{Hash, Hasher};
-use crate::op::Operation1;
+use std::fmt::Formatter;
+use std::hash::Hash;
+use std::slice::Iter;
+use crate::op::Operation;
 
-#[derive(Debug, PartialEq, Hash, Eq)]
+#[derive(Debug, PartialEq, Hash, Eq, Clone)]
 pub struct Process {
     pid: usize,
-    ops: Vec<Operation1>
+    ops: Vec<(usize, Operation)> // the process operations and their unique ids
 }
 
 impl Process {
@@ -16,15 +17,29 @@ impl Process {
         }
     }
 
-    pub fn add_op(&mut self, op: Operation1) {
-        self.ops.push(op);
+    pub fn add_op(&mut self, id: usize, op: Operation) {
+        self.ops.push((id, op));
     }
 
-    pub fn ops(&self) -> &Vec<Operation1> {
-        self.ops.as_ref()
+    pub fn remove_op(&mut self, id: &usize) {
+        self.ops.retain(|(op_id, _)| op_id != id);
+    }
+
+    pub fn ops(&self) -> Iter<'_, (usize, Operation)> {
+        self.ops.iter()
     }
 
     pub fn pid(&self) -> usize {
         self.pid
+    }
+}
+
+impl std::fmt::Display for Process {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        for (op_id, op) in self.ops.iter() {
+            writeln!(f, "{} {}:{}", self.pid, op_id, op)?;
+        }
+
+        Ok(())
     }
 }
