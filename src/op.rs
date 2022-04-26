@@ -1,7 +1,7 @@
+use crate::file::File;
 use std::fmt;
 use std::fmt::Formatter;
 use std::rc::Rc;
-use crate::file::File;
 
 #[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub enum Operation {
@@ -13,13 +13,13 @@ pub enum Operation {
     Rename(Rc<File>, String),            // args: FileDir, new_name
     OpenAt(Rc<File>, i32),               // args: FileDir, offset
     Truncate(Rc<File>),                  // args: FileDir
-    GetRandom(usize),                  // args: len
+    GetRandom(usize),                    // args: len
     Stat(Rc<File>),                      // args: path
     Fstat(Rc<File>),                     // args: path
     Statx(Rc<File>),                     // args: path
     StatFS(Rc<File>),                    // args: path
     Fstatat(Rc<File>),                   // args: path
-    Clone(usize),                      // args: process id of the cloned process
+    Clone(usize),                        // args: process id of the cloned process
     NoOp,
 }
 

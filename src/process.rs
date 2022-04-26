@@ -1,20 +1,17 @@
+use crate::op::Operation;
 use std::fmt::Formatter;
 use std::hash::Hash;
 use std::slice::Iter;
-use crate::op::Operation;
 
 #[derive(Debug, PartialEq, Hash, Eq, Clone)]
 pub struct Process {
     pid: usize,
-    ops: Vec<(usize, Operation)> // the process operations and their unique ids
+    ops: Vec<(usize, Operation)>, // the process operations and their unique ids
 }
 
 impl Process {
     pub fn new(pid: usize) -> Self {
-        Self {
-            pid,
-            ops: vec![]
-        }
+        Self { pid, ops: vec![] }
     }
 
     pub fn add_op(&mut self, id: usize, op: Operation) {

@@ -15,10 +15,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut parser = Parser::new(args.log_path);
-    let (serial, parallel) = parser.parse()?;
+    let (main_processes, postponed_processes) = parser.parse()?;
 
-    println!("serial operations count: {:#?}", serial.len());
-    println!("parallel operations count: {}", parallel.len());
+    for main_process in main_processes {
+        println!("{}", main_process);
+    }
+    println!("postponed processes: ");
+    for postponed_process in postponed_processes {
+        println!("{}", postponed_process);
+    }
 
     Ok(())
 }

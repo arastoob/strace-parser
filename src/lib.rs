@@ -1,13 +1,11 @@
-mod error;
-mod ops;
-mod parser;
-mod order_manager;
-mod process;
-mod file;
-mod op;
 mod dag;
 mod deps;
+mod error;
+mod file;
+mod op;
+mod parser;
+mod process;
 
 // re-export the required modules
-pub use ops::Operation;
-pub use parser::{Parser, FileDir};
+pub use op::Operation;
+pub use parser::{FileDir, Parser};

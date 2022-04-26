@@ -1,6 +1,6 @@
+use crate::error::Error;
 use std::fmt::Formatter;
 use std::path::{Path, PathBuf};
-use crate::error::Error;
 
 #[derive(Debug, PartialEq, Hash, Eq)]
 pub struct File {

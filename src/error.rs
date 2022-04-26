@@ -10,7 +10,7 @@ pub enum Error {
 
     ParseError(String),
 
-    InvalidType(String)
+    InvalidType(String),
 }
 
 impl std::error::Error for Error {}
