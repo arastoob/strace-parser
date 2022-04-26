@@ -1,5 +1,4 @@
-use std::cell::RefCell;
-use std::collections::HashSet;
+use std::cell::{Ref, RefCell, RefMut};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::rc::{Rc, Weak};
@@ -10,15 +9,16 @@ use std::slice::Iter;
 /// The DAG can have multiple edges between two nodes, of course with different labels
 ///
 pub struct DAG<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq +  Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     nodes: Vec<Rc<Node<N>>>,
     edges: Vec<Rc<Edge<N, L>>>
 }
 
+#[allow(dead_code)]
 impl <N, L>DAG<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     pub fn new() -> Self {
@@ -161,7 +161,7 @@ impl <N, L>DAG<N, L>
 }
 
 impl <N, L>Display for DAG<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -169,7 +169,7 @@ impl <N, L>Display for DAG<N, L>
             for neighbor in node.neighbors() {
                 if let Some(edges) = self.edges_between(node.clone(), neighbor.clone()) {
                     for edge in edges {
-                        writeln!(f, "   {} --> {} [{}]", node.data(), neighbor.data(), edge.label());
+                        writeln!(f, "   {} --> {} [{}]", node.data(), neighbor.data(), edge.label())?;
                     }
                 }
             }
@@ -182,16 +182,16 @@ impl <N, L>Display for DAG<N, L>
 // The DAG nodes
 #[derive(Debug)]
 pub struct Node<N>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display
+    where N: std::hash::Hash + std::cmp::PartialEq + Display
 {
-    data: N, // node data
+    data: RefCell<N>, // node data
     neighbors: RefCell<Vec<Rc<Node<N>>>>, // node's neighbors
     parent: RefCell<Weak<Node<N>>>, // node's parent
     in_degree: RefCell<usize>,
 }
 
 impl <N>PartialEq for Node<N>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display
+    where N: std::hash::Hash + std::cmp::PartialEq + Display
 {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
@@ -199,23 +199,24 @@ impl <N>PartialEq for Node<N>
 }
 
 impl <N>Hash for Node<N>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display
+    where N: std::hash::Hash + std::cmp::PartialEq + Display
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.data.hash(state);
+        self.data.borrow().hash(state);
     }
 }
 
 impl <N>Eq for Node<N>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display
+    where N: std::hash::Hash + std::cmp::PartialEq + Display
 {}
 
+#[allow(dead_code)]
 impl <N>Node<N>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display
+    where N: std::hash::Hash + std::cmp::PartialEq + Display
 {
     pub fn new(data: N) -> Self {
         Self {
-            data,
+            data: RefCell::new(data),
             neighbors: RefCell::new(vec![]),
             parent: RefCell::new(Weak::new()),
             in_degree: RefCell::new(0)
@@ -232,8 +233,12 @@ impl <N>Node<N>
         self.parent.borrow().upgrade()
     }
 
-    pub fn data(&self) -> N {
-        self.data.clone()
+    pub fn data(&self) -> Ref<'_, N> {
+        self.data.borrow()
+    }
+
+    pub fn data_mut(&self) -> RefMut<'_, N> {
+        self.data.borrow_mut()
     }
 
     fn add_neighbor(&self, neighbor: Rc<Node<N>>) {
@@ -258,7 +263,7 @@ impl <N>Node<N>
 
 // The DAG edges
 pub struct Edge<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     label: L, // edge label
@@ -267,7 +272,7 @@ pub struct Edge<N, L>
 }
 
 impl <N, L>PartialEq for Edge<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     fn eq(&self, other: &Self) -> bool {
@@ -276,7 +281,7 @@ impl <N, L>PartialEq for Edge<N, L>
 }
 
 impl <N, L>Hash for Edge<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
@@ -287,12 +292,12 @@ impl <N, L>Hash for Edge<N, L>
 }
 
 impl <N, L>Eq for Edge<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {}
 
 impl<N, L> Edge<N, L>
-    where N: std::hash::Hash + std::cmp::PartialEq + Clone + Display,
+    where N: std::hash::Hash + std::cmp::PartialEq + Display,
           L: std::hash::Hash + std::cmp::PartialEq + Clone + Display
 {
     pub fn new(label: L, source: Rc<Node<N>>, target: Rc<Node<N>>) -> Self {
