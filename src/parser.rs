@@ -8,13 +8,13 @@ use std::collections::{HashMap, HashSet};
 use std::fmt::Formatter;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
-use std::rc::Rc;
+use std::sync::Arc;
 
 pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     existing_files: HashSet<FileDir>, // keep existing files info
-    accessed_files: HashMap<String, Rc<File>>, // all the files and directories accessed by processes
+    accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
     ongoing_ops: HashMap<usize, String>,       // keeping the unfinished operations for each process
 }
 
@@ -782,11 +782,11 @@ impl Parser {
         Ok(Operation::clone_op(ret))
     }
 
-    fn file(&mut self, path: &str) -> Rc<File> {
+    fn file(&mut self, path: &str) -> Arc<File> {
         match self.accessed_files.get(path) {
             Some(f) => f.clone(),
             None => {
-                let file = Rc::new(File::new(path));
+                let file = Arc::new(File::new(path));
                 self.accessed_files.insert(path.to_string(), file.clone());
                 file
             }
@@ -971,7 +971,7 @@ mod test {
     use crate::parser::{Parser, Parts};
     use crate::Operation;
     use std::path::PathBuf;
-    use std::rc::Rc;
+    use std::sync::Arc;
 
     #[test]
     fn parts() -> Result<(), Box<dyn std::error::Error>> {
@@ -1093,7 +1093,7 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector"),
-                &Operation::OpenAt(Rc::new(File::new("a_path")), 0)
+                &Operation::OpenAt(Arc::new(File::new("a_path")), 0)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
@@ -1109,13 +1109,13 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector"),
-                &Operation::Mknod(Rc::new(File::new("another_path")))
+                &Operation::Mknod(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(1)
                     .expect("failed to read the second entry of the vector"),
-                &Operation::OpenAt(Rc::new(File::new("another_path")), 0)
+                &Operation::OpenAt(Arc::new(File::new("another_path")), 0)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
@@ -1131,19 +1131,19 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector"),
-                &Operation::Mknod(Rc::new(File::new("another_path")))
+                &Operation::Mknod(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(1)
                     .expect("failed to read the second entry of the vector"),
-                &Operation::Truncate(Rc::new(File::new("another_path")))
+                &Operation::Truncate(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(2)
                     .expect("failed to read the third entry of the vector"),
-                &Operation::OpenAt(Rc::new(File::new("another_path")), 0)
+                &Operation::OpenAt(Arc::new(File::new("another_path")), 0)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
@@ -1170,7 +1170,7 @@ mod test {
             let read_op1 = parser.read(args)?;
             assert_eq!(
                 read_op1,
-                Operation::Read(Rc::new(File::new("a_path")), 0, 50)
+                Operation::Read(Arc::new(File::new("a_path")), 0, 50)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", read_line1));
@@ -1181,7 +1181,7 @@ mod test {
             let read_op2 = parser.read(args)?;
             assert_eq!(
                 read_op2,
-                Operation::Read(Rc::new(File::new("a_path")), 50, 20)
+                Operation::Read(Arc::new(File::new("a_path")), 50, 20)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", read_line2));
@@ -1208,7 +1208,7 @@ mod test {
             let pread_op1 = parser.pread(args)?;
             assert_eq!(
                 pread_op1,
-                Operation::Read(Rc::new(File::new("a_path")), 100, 50)
+                Operation::Read(Arc::new(File::new("a_path")), 100, 50)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", read_line1));
@@ -1219,7 +1219,7 @@ mod test {
             let pread_op2 = parser.pread(args)?;
             assert_eq!(
                 pread_op2,
-                Operation::Read(Rc::new(File::new("a_path")), 500, 20)
+                Operation::Read(Arc::new(File::new("a_path")), 500, 20)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", read_line2));
@@ -1231,7 +1231,7 @@ mod test {
             let read_op = parser.read(args)?;
             assert_eq!(
                 read_op,
-                Operation::Read(Rc::new(File::new("a_path")), 0, 20)
+                Operation::Read(Arc::new(File::new("a_path")), 0, 20)
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", read_line3));
@@ -1257,7 +1257,7 @@ mod test {
             assert_eq!(
                 write_op1,
                 Operation::Write(
-                    Rc::new(File::new("a_path")),
+                    Arc::new(File::new("a_path")),
                     0,
                     17,
                     "some content here".to_string()
@@ -1276,7 +1276,7 @@ mod test {
             let write_op2 = parser.write(args)?;
             assert_eq!(
                 write_op2,
-                Operation::Write(Rc::new(File::new("a_path")), 17, 5, "hello".to_string())
+                Operation::Write(Arc::new(File::new("a_path")), 17, 5, "hello".to_string())
             );
         } else {
             panic!(
@@ -1308,7 +1308,7 @@ mod test {
             assert_eq!(
                 write_op2,
                 Operation::Write(
-                    Rc::new(File::new("a_path")),
+                    Arc::new(File::new("a_path")),
                     0,
                     10,
                     "some other content here".to_string()
@@ -1356,7 +1356,7 @@ mod test {
             "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
         if let Parts::Finished(_, _, args, _) = parser.parts(&fstat_line)? {
             let fstat_op = parser.fstat(args)?;
-            assert_eq!(fstat_op, Operation::Fstat(Rc::new(File::new("a_path"))));
+            assert_eq!(fstat_op, Operation::Fstat(Arc::new(File::new("a_path"))));
 
             assert_eq!(parser.existing_files.len(), 1);
             let file_size = parser
@@ -1382,7 +1382,7 @@ mod test {
             let mkdir_op = parser.mkdir(args)?;
             assert_eq!(
                 mkdir_op,
-                Operation::Mkdir(Rc::new(File::new("a_path")), "0777".to_string())
+                Operation::Mkdir(Arc::new(File::new("a_path")), "0777".to_string())
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", mkdir_line));
@@ -1399,7 +1399,7 @@ mod test {
             let operation = parser.rename(args)?;
             assert_eq!(
                 operation,
-                Operation::Rename(Rc::new(File::new("old_path")), "new_path".to_string())
+                Operation::Rename(Arc::new(File::new("old_path")), "new_path".to_string())
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
@@ -1418,7 +1418,7 @@ mod test {
             let operation = parser.renameat(args)?;
             assert_eq!(
                 operation,
-                Operation::Rename(Rc::new(File::new("old_path")), "new_path".to_string())
+                Operation::Rename(Arc::new(File::new("old_path")), "new_path".to_string())
             );
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
