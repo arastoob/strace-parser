@@ -4,12 +4,13 @@ use crate::file::File;
 use crate::process::Process;
 use std::fmt::{Display, Formatter};
 use std::rc::Rc;
+use std::sync::Arc;
 
 // The dependecy graph node's can be Process or File
 #[derive(Hash, PartialEq, Eq)]
 pub enum GraphNode {
     Process(Process),
-    File(Rc<File>),
+    File(Arc<File>),
 }
 
 impl GraphNode {
@@ -146,20 +147,20 @@ impl Display for DependencyGraph {
 
 #[cfg(test)]
 mod test {
+    use std::sync::Arc;
     use crate::dag::DAG;
     use crate::deps::DependencyGraph;
     use crate::error::Error;
     use crate::file::File;
     use crate::op::Operation;
     use crate::process::Process;
-    use std::rc::Rc;
 
     fn processes() -> Vec<Process> {
-        let f1 = Rc::new(File::new("f1".to_string()));
-        let f2 = Rc::new(File::new("f2".to_string()));
-        let d1 = Rc::new(File::new("d1".to_string()));
-        let f3 = Rc::new(File::new("f3".to_string()));
-        let f4 = Rc::new(File::new("f4".to_string()));
+        let f1 = Arc::new(File::new("f1".to_string()));
+        let f2 = Arc::new(File::new("f2".to_string()));
+        let d1 = Arc::new(File::new("d1".to_string()));
+        let f3 = Arc::new(File::new("f3".to_string()));
+        let f4 = Arc::new(File::new("f4".to_string()));
 
         let mut processes = vec![];
         let mut p1 = Process::new(1);

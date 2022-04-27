@@ -1,30 +1,30 @@
 use crate::file::File;
 use std::fmt;
 use std::fmt::Formatter;
-use std::rc::Rc;
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub enum Operation {
-    Read(Rc<File>, i32, usize),          // args: FileDir, offset, len
-    Write(Rc<File>, i32, usize, String), // args: FileDir, offset, len, content
-    Mkdir(Rc<File>, String),             // args: path, mode
-    Mknod(Rc<File>),                     // args: path
-    Remove(Rc<File>),                    // args: FileDir
-    Rename(Rc<File>, String),            // args: FileDir, new_name
-    OpenAt(Rc<File>, i32),               // args: FileDir, offset
-    Truncate(Rc<File>),                  // args: FileDir
+    Read(Arc<File>, i32, usize),          // args: FileDir, offset, len
+    Write(Arc<File>, i32, usize, String), // args: FileDir, offset, len, content
+    Mkdir(Arc<File>, String),             // args: path, mode
+    Mknod(Arc<File>),                     // args: path
+    Remove(Arc<File>),                    // args: FileDir
+    Rename(Arc<File>, String),            // args: FileDir, new_name
+    OpenAt(Arc<File>, i32),               // args: FileDir, offset
+    Truncate(Arc<File>),                  // args: FileDir
     GetRandom(usize),                    // args: len
-    Stat(Rc<File>),                      // args: path
-    Fstat(Rc<File>),                     // args: path
-    Statx(Rc<File>),                     // args: path
-    StatFS(Rc<File>),                    // args: path
-    Fstatat(Rc<File>),                   // args: path
+    Stat(Arc<File>),                      // args: path
+    Fstat(Arc<File>),                     // args: path
+    Statx(Arc<File>),                     // args: path
+    StatFS(Arc<File>),                    // args: path
+    Fstatat(Arc<File>),                   // args: path
     Clone(usize),                        // args: process id of the cloned process
     NoOp,
 }
 
 impl Operation {
-    pub fn read(file: Rc<File>, len: usize, offset: i32) -> Self {
+    pub fn read(file: Arc<File>, len: usize, offset: i32) -> Self {
         Operation::Read(file, offset, len)
     }
 
@@ -32,27 +32,27 @@ impl Operation {
         Operation::NoOp
     }
 
-    pub fn mkdir(file: Rc<File>, mode: String) -> Self {
+    pub fn mkdir(file: Arc<File>, mode: String) -> Self {
         Operation::Mkdir(file, mode)
     }
 
-    pub fn mknod(file: Rc<File>) -> Self {
+    pub fn mknod(file: Arc<File>) -> Self {
         Operation::Mknod(file)
     }
 
-    pub fn remove(file: Rc<File>) -> Self {
+    pub fn remove(file: Arc<File>) -> Self {
         Operation::Remove(file)
     }
 
-    pub fn open_at(file: Rc<File>, offset: i32) -> Self {
+    pub fn open_at(file: Arc<File>, offset: i32) -> Self {
         Operation::OpenAt(file, offset)
     }
 
-    pub fn truncate(file: Rc<File>) -> Self {
+    pub fn truncate(file: Arc<File>) -> Self {
         Operation::Truncate(file)
     }
 
-    pub fn write(file: Rc<File>, content: String, len: usize, offset: i32) -> Self {
+    pub fn write(file: Arc<File>, content: String, len: usize, offset: i32) -> Self {
         Operation::Write(file, offset, len, content)
     }
 
@@ -60,27 +60,27 @@ impl Operation {
         Operation::GetRandom(len)
     }
 
-    pub fn stat(file: Rc<File>) -> Self {
+    pub fn stat(file: Arc<File>) -> Self {
         Operation::Stat(file)
     }
 
-    pub fn fstat(file: Rc<File>) -> Self {
+    pub fn fstat(file: Arc<File>) -> Self {
         Operation::Fstat(file)
     }
 
-    pub fn statx(file: Rc<File>) -> Self {
+    pub fn statx(file: Arc<File>) -> Self {
         Operation::Statx(file)
     }
 
-    pub fn statfs(file: Rc<File>) -> Self {
+    pub fn statfs(file: Arc<File>) -> Self {
         Operation::StatFS(file)
     }
 
-    pub fn fstatat(file: Rc<File>) -> Self {
+    pub fn fstatat(file: Arc<File>) -> Self {
         Operation::Fstatat(file)
     }
 
-    pub fn rename(file: Rc<File>, to: String) -> Self {
+    pub fn rename(file: Arc<File>, to: String) -> Self {
         Operation::Rename(file, to)
     }
 
@@ -88,7 +88,7 @@ impl Operation {
         Operation::Clone(pid)
     }
 
-    pub fn file(&self) -> Option<Rc<File>> {
+    pub fn file(&self) -> Option<Arc<File>> {
         match &self {
             &Operation::Mkdir(file, _) => Some(file.clone()),
             &Operation::Mknod(file) => Some(file.clone()),
