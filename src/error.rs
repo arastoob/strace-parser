@@ -8,7 +8,9 @@ pub enum Error {
     /// Something not found
     NotFound(String),
 
-    ParseError(String)
+    ParseError(String),
+
+    InvalidType(String),
 }
 
 impl std::error::Error for Error {}
@@ -18,6 +20,7 @@ impl fmt::Display for Error {
         match self {
             &Error::NotFound(ref detail) => write!(f, "{} not found", detail),
             &Error::ParseError(ref detail) => write!(f, "could not parse {}", detail),
+            &Error::InvalidType(ref detail) => write!(f, "invalid type: {}", detail),
         }
     }
 }

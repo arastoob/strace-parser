@@ -1,7 +1,11 @@
+mod dag;
+mod deps;
 mod error;
-mod ops;
+mod file;
+mod op;
 mod parser;
+mod process;
 
 // re-export the required modules
-pub use ops::Operation;
+pub use op::Operation;
 pub use parser::{FileDir, Parser};

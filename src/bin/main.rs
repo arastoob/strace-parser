@@ -15,23 +15,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut parser = Parser::new(args.log_path);
-    let operations = parser.parse()?;
+    let (main_processes, postponed_processes) = parser.parse()?;
 
-    println!("operations:");
-    for operation in operations {
-        println!("{}", operation);
+    for main_process in main_processes {
+        println!("{}", main_process);
     }
-
-    println!("\naccessed files:");
-    let accessed_files = parser.accessed_files()?;
-    for file_dir in accessed_files {
-        println!("{}", file_dir);
-    }
-
-    println!("\noperations done by each process:");
-    let pid_op = parser.processes_operations()?;
-    for (pid, ops) in pid_op {
-        println!("pid: {}, ops: {:?}", pid, ops);
+    println!("postponed processes: ");
+    for postponed_process in postponed_processes {
+        println!("{}", postponed_process);
     }
 
     Ok(())
