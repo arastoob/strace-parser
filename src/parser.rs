@@ -80,7 +80,7 @@ impl Parser {
     }
 
     pub fn parse(&mut self) -> Result<(Vec<Process>, Vec<Process>), Box<dyn std::error::Error>> {
-        let mut processes: HashMap<usize, Process> = HashMap::new();
+        let mut processes: Vec<Process> = vec![];
 
         let file = std::fs::File::open(self.log_file.clone())?;
         let reader = BufReader::new(file);
@@ -106,13 +106,13 @@ impl Parser {
             match self.parts(&line)? {
                 Parts::Unfinished(_, _) => continue,
                 Parts::Finished(pid, op, args, ret) => {
-                    if !processes.contains_key(&pid) {
-                        // generate the process for the first time
-                        processes.insert(pid, Process::new(pid));
+                    if processes.iter().find(|p| p.pid() == pid).is_none() {
+                        // generate the process for the first time and add it to the list of processes
+                        processes.push(Process::new(pid));
                     }
 
                     let process = processes
-                        .get_mut(&pid)
+                        .iter_mut().find(|p| p.pid() == pid)
                         .ok_or(Error::NotFound(format!("pid {}", pid)))?;
 
                     match op.as_ref() {
@@ -188,8 +188,6 @@ impl Parser {
                 }
             }
         }
-
-        let processes = processes.values().cloned().collect::<Vec<_>>();
 
         let dep_dag = DependencyGraph::new(processes);
         let postponed_r_graph = dep_dag.postponed_r_graph();
