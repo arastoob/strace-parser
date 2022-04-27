@@ -14,10 +14,10 @@ impl File {
         }
     }
 
-    pub fn path(&self) -> Result<&str, Error> {
-        self.path.as_os_str().to_str().ok_or(Error::ParseError(
+    pub fn path(&self) -> Result<&str, Box<dyn std::error::Error>> {
+        self.path.as_os_str().to_str().ok_or(Box::new(Error::ParseError(
             "failed to convert PathBuf to String".to_string(),
-        ))
+        )))
     }
 }
 
