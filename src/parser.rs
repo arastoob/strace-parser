@@ -15,7 +15,7 @@ pub struct Parser {
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     existing_files: HashSet<FileDir>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
-    ongoing_ops: HashMap<usize, String>,       // keeping the unfinished operations for each process
+    ongoing_ops: HashMap<usize, String>, // keeping the unfinished operations for each process
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -79,13 +79,13 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<(Vec<Process>, Vec<Process>), Box<dyn std::error::Error>> {
+    pub fn parse(&mut self) -> Result<Vec<Process>, Box<dyn std::error::Error>> {
         let mut processes: Vec<Process> = vec![];
 
         let file = std::fs::File::open(self.log_file.clone())?;
         let reader = BufReader::new(file);
 
-        for (idx, line) in reader.lines().enumerate() {
+        for line in reader.lines() {
             let line = line?;
 
             // make sure the strace logs has process ids for each logged operation
@@ -112,76 +112,61 @@ impl Parser {
                     }
 
                     let process = processes
-                        .iter_mut().find(|p| p.pid() == pid)
+                        .iter_mut()
+                        .find(|p| p.pid() == pid)
                         .ok_or(Error::NotFound(format!("pid {}", pid)))?;
 
                     match op.as_ref() {
                         "openat" => {
                             for operation in self.openat(args, ret)? {
-                                // operations.push((pid, operation));
-                                process.add_op(idx, operation);
+                                process.add_op(operation.into());
                             }
                         }
                         "fcntl" => {
-                            // operations.push((pid, self.fcntl(args, ret)?));
-                            process.add_op(idx, self.fcntl(args, ret)?);
+                            process.add_op(self.fcntl(args, ret)?.into());
                         }
                         "read" => {
                             // read op updates the file offset
-                            // operations.push((pid, self.read(args)?));
-                            process.add_op(idx, self.read(args)?);
+                            process.add_op(self.read(args)?.into());
                         }
                         "stat" => {
-                            // operations.push((pid, self.stat(args)?));
-                            process.add_op(idx, self.stat(args)?);
+                            process.add_op(self.stat(args)?.into());
                         }
                         "fstat" => {
-                            // operations.push((pid, self.fstat(args)?));
-                            process.add_op(idx, self.fstat(args)?);
+                            process.add_op(self.fstat(args)?.into());
                         }
                         "statx" => {
-                            // operations.push((pid, self.statx(args)?));
-                            process.add_op(idx, self.statx(args)?);
+                            process.add_op(self.statx(args)?.into());
                         }
                         "statfs" => {
-                            // operations.push((pid, self.statfs(args)?));
-                            process.add_op(idx, self.statfs(args)?);
+                            process.add_op(self.statfs(args)?.into());
                         }
                         op if op == "fstatat64" || op == "newfstatat" || op == "fstatat" => {
-                            // operations.push((pid, self.fstatat(args)?));
-                            process.add_op(idx, self.fstatat(args)?);
+                            process.add_op(self.fstatat(args)?.into());
                         }
                         "pread" => {
-                            // operations.push((pid, self.pread(args)?));
-                            process.add_op(idx, self.pread(args)?);
+                            process.add_op(self.pread(args)?.into());
                         }
                         "getrandom" => {
-                            // operations.push((pid, self.get_random(args)?));
-                            process.add_op(idx, self.get_random(args)?);
+                            process.add_op(self.get_random(args)?.into());
                         }
                         "write" => {
-                            // operations.push((pid, self.write(args)?));
-                            process.add_op(idx, self.write(args)?);
+                            process.add_op(self.write(args)?.into());
                         }
                         "mkdir" => {
-                            // operations.push((pid, self.mkdir(args)?));
-                            process.add_op(idx, self.mkdir(args)?);
+                            process.add_op(self.mkdir(args)?.into());
                         }
                         "unlinkat" => {
-                            // operations.push((pid, self.unlink(args)?));
-                            process.add_op(idx, self.unlink(args)?);
+                            process.add_op(self.unlink(args)?.into());
                         }
                         "rename" => {
-                            // operations.push((pid, self.rename(args)?));
-                            process.add_op(idx, self.rename(args)?);
+                            process.add_op(self.rename(args)?.into());
                         }
                         op if op == "renameat" || op == "renameat2" => {
-                            // operations.push((pid, self.renameat(args)?));
-                            process.add_op(idx, self.renameat(args)?);
+                            process.add_op(self.renameat(args)?.into());
                         }
                         "clone" => {
-                            // operations.push((pid, self.clone(ret)?));
-                            process.add_op(idx, self.clone(ret)?);
+                            process.add_op(self.clone(ret)?.into());
                         }
                         _ => {}
                     }
@@ -189,33 +174,13 @@ impl Parser {
             }
         }
 
-        let dep_dag = DependencyGraph::new(processes);
-        let postponed_r_graph = dep_dag.postponed_r_graph();
-
-        // remove the postponed read ops from the processes' operations
-        for postponed_edge in postponed_r_graph.dag.edges() {
-            if let Some(edge) = dep_dag.dag.edges().find(|e| *e == postponed_edge) {
-                let pnode = edge.source();
-                let mut data = pnode.data_mut();
-                let process = data.process_mut()?;
-
-                let label = edge.label(); // the label format is: {op_id}:{op_name}
-
-                let re = Regex::new(r"^(?P<op_id>\d+):(?P<op>.+)$")?;
-                assert!(re.is_match(&label));
-                let cap = re
-                    .captures(&label)
-                    .ok_or(Error::ParseError(label.clone()))?;
-                let op_id = cap["op_id"].parse::<usize>()?;
-
-                process.remove_op(&op_id);
-            }
-        }
-
+        let dep_dag = DependencyGraph::new(processes)?;
+        // mark the dependencies
+        dep_dag.mark_dependencies()?;
+        // get the process list with the pre lists per each operation
         let processes = dep_dag.processes();
-        let postponed_processes = postponed_r_graph.processes();
 
-        Ok((processes, postponed_processes))
+        Ok(processes)
     }
 
     // parse an openat line
@@ -968,10 +933,10 @@ impl Parser {
 #[cfg(test)]
 mod test {
     use crate::file::File;
+    use crate::op::OperationType;
     use crate::parser::{Parser, Parts};
     use std::path::PathBuf;
     use std::sync::Arc;
-    use crate::op::OperationType;
 
     #[test]
     fn parts() -> Result<(), Box<dyn std::error::Error>> {
@@ -1093,7 +1058,7 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::OpenAt(Arc::new(File::new("a_path")), 0)
             );
         } else {
@@ -1110,14 +1075,14 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::Mknod(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(1)
                     .expect("failed to read the second entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::OpenAt(Arc::new(File::new("another_path")), 0)
             );
         } else {
@@ -1134,21 +1099,21 @@ mod test {
                 operations
                     .get(0)
                     .expect("failed to read the first entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::Mknod(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(1)
                     .expect("failed to read the second entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::Truncate(Arc::new(File::new("another_path")))
             );
             assert_eq!(
                 operations
                     .get(2)
                     .expect("failed to read the third entry of the vector")
-                    .op(),
+                    .op_type(),
                 &OperationType::OpenAt(Arc::new(File::new("another_path")), 0)
             );
         } else {
@@ -1175,7 +1140,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
             let read_op1 = parser.read(args)?;
             assert_eq!(
-                read_op1.op(),
+                read_op1.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 0, 50)
             );
         } else {
@@ -1186,7 +1151,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
             let read_op2 = parser.read(args)?;
             assert_eq!(
-                read_op2.op(),
+                read_op2.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 50, 20)
             );
         } else {
@@ -1213,7 +1178,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
             let pread_op1 = parser.pread(args)?;
             assert_eq!(
-                pread_op1.op(),
+                pread_op1.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 100, 50)
             );
         } else {
@@ -1224,7 +1189,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
             let pread_op2 = parser.pread(args)?;
             assert_eq!(
-                pread_op2.op(),
+                pread_op2.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 500, 20)
             );
         } else {
@@ -1236,7 +1201,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&read_line3)? {
             let read_op = parser.read(args)?;
             assert_eq!(
-                read_op.op(),
+                read_op.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 0, 20)
             );
         } else {
@@ -1261,7 +1226,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line1)? {
             let write_op1 = parser.write(args)?;
             assert_eq!(
-                write_op1.op(),
+                write_op1.op_type(),
                 &OperationType::Write(
                     Arc::new(File::new("a_path")),
                     0,
@@ -1281,7 +1246,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
             let write_op2 = parser.write(args)?;
             assert_eq!(
-                write_op2.op(),
+                write_op2.op_type(),
                 &OperationType::Write(Arc::new(File::new("a_path")), 17, 5, "hello".to_string())
             );
         } else {
@@ -1312,7 +1277,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
             let write_op2 = parser.write(args)?;
             assert_eq!(
-                write_op2.op(),
+                write_op2.op_type(),
                 &OperationType::Write(
                     Arc::new(File::new("a_path")),
                     0,
@@ -1336,7 +1301,7 @@ mod test {
         let line = "909196 getrandom(a_buf, 16, GRND_NONBLOCK) = 16".to_string();
         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
             let operation = parser.get_random(args)?;
-            assert_eq!(operation.op(), &OperationType::GetRandom(16));
+            assert_eq!(operation.op_type(), &OperationType::GetRandom(16));
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
         }
@@ -1362,7 +1327,10 @@ mod test {
             "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
         if let Parts::Finished(_, _, args, _) = parser.parts(&fstat_line)? {
             let fstat_op = parser.fstat(args)?;
-            assert_eq!(fstat_op.op(), &OperationType::Fstat(Arc::new(File::new("a_path"))));
+            assert_eq!(
+                fstat_op.op_type(),
+                &OperationType::Fstat(Arc::new(File::new("a_path")))
+            );
 
             assert_eq!(parser.existing_files.len(), 1);
             let file_size = parser
@@ -1387,7 +1355,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&mkdir_line)? {
             let mkdir_op = parser.mkdir(args)?;
             assert_eq!(
-                mkdir_op.op(),
+                mkdir_op.op_type(),
                 &OperationType::Mkdir(Arc::new(File::new("a_path")), "0777".to_string())
             );
         } else {
@@ -1404,7 +1372,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
             let operation = parser.rename(args)?;
             assert_eq!(
-                operation.op(),
+                operation.op_type(),
                 &OperationType::Rename(Arc::new(File::new("old_path")), "new_path".to_string())
             );
         } else {
@@ -1423,7 +1391,7 @@ mod test {
         if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
             let operation = parser.renameat(args)?;
             assert_eq!(
-                operation.op(),
+                operation.op_type(),
                 &OperationType::Rename(Arc::new(File::new("old_path")), "new_path".to_string())
             );
         } else {
