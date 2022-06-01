@@ -15,14 +15,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
     let mut parser = Parser::new(args.log_path);
-    let (main_processes, postponed_processes) = parser.parse()?;
+    let processes = parser.parse()?;
 
-    for main_process in main_processes {
-        println!("{}", main_process);
-    }
-    println!("postponed processes: ");
-    for postponed_process in postponed_processes {
-        println!("{}", postponed_process);
+    for process in processes {
+        println!("{}", process);
     }
 
     Ok(())
