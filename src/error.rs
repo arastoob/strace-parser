@@ -8,9 +8,6 @@ pub enum Error {
     /// Something not found
     NotFound(String),
 
-    /// An error occurred on the disk or network
-    IO(std::io::Error),
-
     ParseError(String),
 
     InvalidType(String),
@@ -18,14 +15,7 @@ pub enum Error {
     PoisonError(String),
 }
 
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::IO(ref e) => Some(e),
-            _ => None,
-        }
-    }
-}
+impl std::error::Error for Error {}
 
 impl<T> From<std::sync::PoisonError<T>> for Error {
     fn from(err: std::sync::PoisonError<T>) -> Error {
@@ -42,7 +32,6 @@ impl fmt::Display for Error {
             &Error::PoisonError(ref detail) => {
                 write!(f, "could not acquire a lock oh shared object: {}", detail)
             }
-            Error::IO(ref err) => write!(f, "IO error: {}", err),
         }
     }
 }
