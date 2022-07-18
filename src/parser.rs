@@ -385,10 +385,20 @@ impl Parser {
         // extract the path from input arguments
         let path = self.path(&args, "stat")?;
 
-        let file_dir = self.file_dir(&args, &path, "stat")?;
-        self.existing_files.insert(file_dir);
+        match self.file_dir(&args, &path, &format!("stat: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::stat(self.file(&path).clone()))
+            },
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
 
-        Ok(Operation::stat(self.file(&path).clone()))
     }
 
     // parse a fstat line
@@ -411,10 +421,19 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                let file_dir = self.file_dir(&args, &path, "fstat")?;
-                self.existing_files.insert(file_dir);
-
-                Ok(Operation::fstat(self.file(&path).clone()))
+                match self.file_dir(&args, &path, &format!("fstat: {}", args)) {
+                    Ok(file_dir) => {
+                        self.existing_files.insert(file_dir);
+                        Ok(Operation::fstat(self.file(&path).clone()))
+                    },
+                    Err(err) => {
+                        if err.to_string().contains("invalid type") {
+                            Ok(Operation::no_op())
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
             }
             None => Ok(Operation::no_op()),
         }
@@ -456,10 +475,19 @@ impl Parser {
             }
         }
 
-        let file_dir = self.file_dir(&args, &path, "statx")?;
-        self.existing_files.insert(file_dir);
-
-        Ok(Operation::statx(self.file(&path).clone()))
+        match self.file_dir(&args, &path, &format!("statx: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::statx(self.file(&path).clone()))
+            },
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // parse a fstatat line
@@ -498,10 +526,22 @@ impl Parser {
             }
         }
 
-        let file_dir = self.file_dir(&args, &path, "fstatat")?;
+        let file_dir = self.file_dir(&args, &path, &format!("fstatat: {}", args))?;
         self.existing_files.insert(file_dir);
 
-        Ok(Operation::fstatat(self.file(&path).clone()))
+        match self.file_dir(&args, &path, &format!("fstatat: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::fstatat(self.file(&path).clone()))
+            },
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // parse a statfs line
@@ -882,24 +922,6 @@ impl Parser {
         path: &str,
         callee: &str,
     ) -> Result<FileDir, Box<dyn std::error::Error>> {
-        // extract the file size
-        let st_size: String = str
-            .trim()
-            .split(",")
-            .filter(|stat| stat.contains("st_size") || stat.contains("stx_size"))
-            .map(|str| str.to_string())
-            .collect();
-        let file_size = st_size
-            .split_at(
-                st_size
-                    .find("=")
-                    .ok_or(Error::NotFound(format!("= from {} line", callee)))?
-                    + 1,
-            )
-            .1
-            .trim()
-            .parse::<usize>()?;
-
         // extract the file type
         let st_mode: String = str
             .trim()
@@ -911,11 +933,35 @@ impl Parser {
             .split_at(
                 st_mode
                     .find("=")
-                    .ok_or(Error::NotFound(format!("= from {} line", callee)))?
+                    .ok_or(Error::NotFound(format!("= from {}", callee)))?
                     + 1,
             )
             .1
             .trim();
+
+        // the mode is not a file or directory
+        if !file_type.contains("S_IFREG") && !file_type.contains("S_IFDIR") {
+            return Err(Box::new(Error::InvalidType("not file or directory".to_string())));
+        }
+
+        // extract the file size
+        let st_size: String = str
+            .trim()
+            .split(",")
+            .filter(|stat| stat.contains("st_size") || stat.contains("stx_size"))
+            .map(|str| str.to_string())
+            .collect();
+        let file_size = st_size
+            .split_at(
+                st_size
+                    .find("=")
+                    .ok_or(Error::NotFound(format!("= from {}", callee)))?
+                    + 1,
+            )
+            .1
+            .trim()
+            .parse::<usize>()?;
+
 
         if file_type.contains("S_IFREG") {
             Ok(FileDir::File(path.to_string(), file_size))
