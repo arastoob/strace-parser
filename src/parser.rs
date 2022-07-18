@@ -318,9 +318,7 @@ impl Parser {
             .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC"))
             .is_some()
         {
-            if let Some(fd_of) = self
-                .fd_map
-                .get(&fd) {
+            if let Some(fd_of) = self.fd_map.get(&fd) {
                 let fd_path = fd_of.path.clone();
                 let offset = fd_of.offset;
                 let size = fd_of.size;
@@ -387,7 +385,7 @@ impl Parser {
             Ok(file_dir) => {
                 self.existing_files.insert(file_dir);
                 Ok(Operation::stat(self.file(&path).clone()))
-            },
+            }
             Err(err) => {
                 if err.to_string().contains("invalid type") {
                     Ok(Operation::no_op())
@@ -396,7 +394,6 @@ impl Parser {
                 }
             }
         }
-
     }
 
     // parse a fstat line
@@ -423,7 +420,7 @@ impl Parser {
                     Ok(file_dir) => {
                         self.existing_files.insert(file_dir);
                         Ok(Operation::fstat(self.file(&path).clone()))
-                    },
+                    }
                     Err(err) => {
                         if err.to_string().contains("invalid type") {
                             Ok(Operation::no_op())
@@ -477,7 +474,7 @@ impl Parser {
             Ok(file_dir) => {
                 self.existing_files.insert(file_dir);
                 Ok(Operation::statx(self.file(&path).clone()))
-            },
+            }
             Err(err) => {
                 if err.to_string().contains("invalid type") {
                     Ok(Operation::no_op())
@@ -531,7 +528,7 @@ impl Parser {
             Ok(file_dir) => {
                 self.existing_files.insert(file_dir);
                 Ok(Operation::fstatat(self.file(&path).clone()))
-            },
+            }
             Err(err) => {
                 if err.to_string().contains("invalid type") {
                     Ok(Operation::no_op())
@@ -822,7 +819,10 @@ impl Parser {
             let unfinished_op = cap["op"].to_string();
 
             // keep the unfinished line until we see the resumed line
-            self.ongoing_ops.insert(format!("{}:{}", pid, unfinished_op), unfinished_line.clone());
+            self.ongoing_ops.insert(
+                format!("{}:{}", pid, unfinished_op),
+                unfinished_line.clone(),
+            );
 
             return Ok(Parts::Unfinished(pid, unfinished_line));
         } else if str.contains("resumed") {
@@ -949,7 +949,9 @@ impl Parser {
 
         // the mode is not a file or directory
         if !file_type.contains("S_IFREG") && !file_type.contains("S_IFDIR") {
-            return Err(Box::new(Error::InvalidType("not file or directory".to_string())));
+            return Err(Box::new(Error::InvalidType(
+                "not file or directory".to_string(),
+            )));
         }
 
         // extract the file size
@@ -969,7 +971,6 @@ impl Parser {
             .1
             .trim()
             .parse::<usize>()?;
-
 
         if file_type.contains("S_IFREG") {
             Ok(FileDir::File(path.to_string(), file_size))

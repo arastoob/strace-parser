@@ -1,6 +1,6 @@
+use clap::Parser as ClapParser;
 use std::fs::OpenOptions;
 use std::io::{BufWriter, Write};
-use clap::Parser as ClapParser;
 use std::path::PathBuf;
 use strace_parser::Parser;
 
