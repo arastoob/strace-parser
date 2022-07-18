@@ -15,7 +15,7 @@ pub struct Parser {
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     existing_files: HashSet<FileDir>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
-    ongoing_ops: HashMap<usize, String>, // keeping the unfinished operations for each process
+    ongoing_ops: HashMap<String, String>, // keeping the unfinished operations for each process
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -318,19 +318,17 @@ impl Parser {
             .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC"))
             .is_some()
         {
-            let fd_of = self
+            if let Some(fd_of) = self
                 .fd_map
-                .get(&fd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", fd)))?;
-            let fd_path = fd_of.path.clone();
-            let offset = fd_of.offset;
-            let size = fd_of.size;
+                .get(&fd) {
+                let fd_path = fd_of.path.clone();
+                let offset = fd_of.offset;
+                let size = fd_of.size;
 
-            // add the duplicated fd to the map
-            // let dup_fd = dup_fd.trim().parse::<i32>()?;
-
-            self.fd_map
-                .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
+                // add the duplicated fd to the map
+                self.fd_map
+                    .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
+            }
         }
 
         Ok(Operation::no_op())
@@ -813,8 +811,18 @@ impl Parser {
 
             let pid = cap["pid"].parse::<usize>()?;
             let unfinished_line = cap["remaining"].to_string();
+
+            let unfinished_re = Regex::new(r"^(?P<op>[^\(]*)\((?P<args>.*) <unfinished ...>$")?;
+            assert!(unfinished_re.is_match(&unfinished_line));
+
+            let cap = unfinished_re
+                .captures(&unfinished_line)
+                .ok_or(Error::ParseError(str.to_string()))?;
+
+            let unfinished_op = cap["op"].to_string();
+
             // keep the unfinished line until we see the resumed line
-            self.ongoing_ops.insert(pid, unfinished_line.clone());
+            self.ongoing_ops.insert(format!("{}:{}", pid, unfinished_op), unfinished_line.clone());
 
             return Ok(Parts::Unfinished(pid, unfinished_line));
         } else if str.contains("resumed") {
@@ -838,7 +846,7 @@ impl Parser {
             // get the unfinished line
             let unfinished_line = self
                 .ongoing_ops
-                .get(&pid)
+                .get(&format!("{}:{}", pid, resumed_op))
                 .ok_or(Error::NotFound(format!("process id {}", pid)))?;
 
             let unfinished_re = Regex::new(r"^(?P<op>[^\(]*)\((?P<args>.*) <unfinished ...>$")?;
