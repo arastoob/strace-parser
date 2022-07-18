@@ -15,7 +15,7 @@ pub struct Parser {
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
     existing_files: HashSet<FileDir>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
-    ongoing_ops: HashMap<usize, String>, // keeping the unfinished operations for each process
+    ongoing_ops: HashMap<String, String>, // keeping the unfinished operations for each process
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
@@ -97,8 +97,8 @@ impl Parser {
             if line.contains("= -1") || // ops with error result
                 line.starts_with("close") || // close op
                 line.starts_with("readlink") || // readlink op
-                line.contains("---") ||
-                line.contains("+++")
+                line.contains("--- ") ||
+                line.contains("+++ exited")
             {
                 continue;
             }
@@ -318,19 +318,15 @@ impl Parser {
             .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC"))
             .is_some()
         {
-            let fd_of = self
-                .fd_map
-                .get(&fd)
-                .ok_or(Error::NotFound(format!("file descriptor {}", fd)))?;
-            let fd_path = fd_of.path.clone();
-            let offset = fd_of.offset;
-            let size = fd_of.size;
+            if let Some(fd_of) = self.fd_map.get(&fd) {
+                let fd_path = fd_of.path.clone();
+                let offset = fd_of.offset;
+                let size = fd_of.size;
 
-            // add the duplicated fd to the map
-            // let dup_fd = dup_fd.trim().parse::<i32>()?;
-
-            self.fd_map
-                .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
+                // add the duplicated fd to the map
+                self.fd_map
+                    .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
+            }
         }
 
         Ok(Operation::no_op())
@@ -385,10 +381,19 @@ impl Parser {
         // extract the path from input arguments
         let path = self.path(&args, "stat")?;
 
-        let file_dir = self.file_dir(&args, &path, "stat")?;
-        self.existing_files.insert(file_dir);
-
-        Ok(Operation::stat(self.file(&path).clone()))
+        match self.file_dir(&args, &path, &format!("stat: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::stat(self.file(&path).clone()))
+            }
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // parse a fstat line
@@ -411,10 +416,19 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                let file_dir = self.file_dir(&args, &path, "fstat")?;
-                self.existing_files.insert(file_dir);
-
-                Ok(Operation::fstat(self.file(&path).clone()))
+                match self.file_dir(&args, &path, &format!("fstat: {}", args)) {
+                    Ok(file_dir) => {
+                        self.existing_files.insert(file_dir);
+                        Ok(Operation::fstat(self.file(&path).clone()))
+                    }
+                    Err(err) => {
+                        if err.to_string().contains("invalid type") {
+                            Ok(Operation::no_op())
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
             }
             None => Ok(Operation::no_op()),
         }
@@ -456,10 +470,19 @@ impl Parser {
             }
         }
 
-        let file_dir = self.file_dir(&args, &path, "statx")?;
-        self.existing_files.insert(file_dir);
-
-        Ok(Operation::statx(self.file(&path).clone()))
+        match self.file_dir(&args, &path, &format!("statx: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::statx(self.file(&path).clone()))
+            }
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // parse a fstatat line
@@ -498,10 +521,22 @@ impl Parser {
             }
         }
 
-        let file_dir = self.file_dir(&args, &path, "fstatat")?;
+        let file_dir = self.file_dir(&args, &path, &format!("fstatat: {}", args))?;
         self.existing_files.insert(file_dir);
 
-        Ok(Operation::fstatat(self.file(&path).clone()))
+        match self.file_dir(&args, &path, &format!("fstatat: {}", args)) {
+            Ok(file_dir) => {
+                self.existing_files.insert(file_dir);
+                Ok(Operation::fstatat(self.file(&path).clone()))
+            }
+            Err(err) => {
+                if err.to_string().contains("invalid type") {
+                    Ok(Operation::no_op())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     // parse a statfs line
@@ -773,8 +808,21 @@ impl Parser {
 
             let pid = cap["pid"].parse::<usize>()?;
             let unfinished_line = cap["remaining"].to_string();
+
+            let unfinished_re = Regex::new(r"^(?P<op>[^\(]*)\((?P<args>.*) <unfinished ...>$")?;
+            assert!(unfinished_re.is_match(&unfinished_line));
+
+            let cap = unfinished_re
+                .captures(&unfinished_line)
+                .ok_or(Error::ParseError(str.to_string()))?;
+
+            let unfinished_op = cap["op"].to_string();
+
             // keep the unfinished line until we see the resumed line
-            self.ongoing_ops.insert(pid, unfinished_line.clone());
+            self.ongoing_ops.insert(
+                format!("{}:{}", pid, unfinished_op),
+                unfinished_line.clone(),
+            );
 
             return Ok(Parts::Unfinished(pid, unfinished_line));
         } else if str.contains("resumed") {
@@ -798,8 +846,8 @@ impl Parser {
             // get the unfinished line
             let unfinished_line = self
                 .ongoing_ops
-                .get(&pid)
-                .ok_or(Error::NotFound(format!("process id {}", pid)))?;
+                .get(&format!("{}:{}", pid, resumed_op))
+                .ok_or(Error::NotFound(format!("{}:{}", pid, resumed_op)))?;
 
             let unfinished_re = Regex::new(r"^(?P<op>[^\(]*)\((?P<args>.*) <unfinished ...>$")?;
             assert!(unfinished_re.is_match(unfinished_line));
@@ -882,24 +930,6 @@ impl Parser {
         path: &str,
         callee: &str,
     ) -> Result<FileDir, Box<dyn std::error::Error>> {
-        // extract the file size
-        let st_size: String = str
-            .trim()
-            .split(",")
-            .filter(|stat| stat.contains("st_size") || stat.contains("stx_size"))
-            .map(|str| str.to_string())
-            .collect();
-        let file_size = st_size
-            .split_at(
-                st_size
-                    .find("=")
-                    .ok_or(Error::NotFound(format!("= from {} line", callee)))?
-                    + 1,
-            )
-            .1
-            .trim()
-            .parse::<usize>()?;
-
         // extract the file type
         let st_mode: String = str
             .trim()
@@ -911,11 +941,36 @@ impl Parser {
             .split_at(
                 st_mode
                     .find("=")
-                    .ok_or(Error::NotFound(format!("= from {} line", callee)))?
+                    .ok_or(Error::NotFound(format!("= from {}", callee)))?
                     + 1,
             )
             .1
             .trim();
+
+        // the mode is not a file or directory
+        if !file_type.contains("S_IFREG") && !file_type.contains("S_IFDIR") {
+            return Err(Box::new(Error::InvalidType(
+                "not file or directory".to_string(),
+            )));
+        }
+
+        // extract the file size
+        let st_size: String = str
+            .trim()
+            .split(",")
+            .filter(|stat| stat.contains("st_size") || stat.contains("stx_size"))
+            .map(|str| str.to_string())
+            .collect();
+        let file_size = st_size
+            .split_at(
+                st_size
+                    .find("=")
+                    .ok_or(Error::NotFound(format!("= from {}", callee)))?
+                    + 1,
+            )
+            .1
+            .trim()
+            .parse::<usize>()?;
 
         if file_type.contains("S_IFREG") {
             Ok(FileDir::File(path.to_string(), file_size))
