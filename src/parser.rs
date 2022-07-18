@@ -97,8 +97,8 @@ impl Parser {
             if line.contains("= -1") || // ops with error result
                 line.starts_with("close") || // close op
                 line.starts_with("readlink") || // readlink op
-                line.contains("---") ||
-                line.contains("+++")
+                line.contains("--- ") ||
+                line.contains("+++ exited")
             {
                 continue;
             }
@@ -847,7 +847,7 @@ impl Parser {
             let unfinished_line = self
                 .ongoing_ops
                 .get(&format!("{}:{}", pid, resumed_op))
-                .ok_or(Error::NotFound(format!("process id {}", pid)))?;
+                .ok_or(Error::NotFound(format!("{}:{}", pid, resumed_op)))?;
 
             let unfinished_re = Regex::new(r"^(?P<op>[^\(]*)\((?P<args>.*) <unfinished ...>$")?;
             assert!(unfinished_re.is_match(unfinished_line));
