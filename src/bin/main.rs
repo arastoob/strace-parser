@@ -6,15 +6,15 @@ use strace_parser::Parser;
 #[derive(ClapParser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
-    /// The path to store benchmark results
+    /// The path to the logged traces
     #[clap(short, long)]
-    log_path: PathBuf,
+    path: PathBuf,
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    let mut parser = Parser::new(args.log_path);
+    let mut parser = Parser::new(args.path);
     let processes = parser.parse()?;
 
     for process in processes {
