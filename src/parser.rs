@@ -392,20 +392,6 @@ impl Parser {
             self.existing_files.insert(file_type);
             Ok(Operation::stat(self.file(&path).clone()))
         }
-
-        // match self.file_type(&args, &path, &format!("stat: {}", args)) {
-        //     Ok(file_dir) => {
-        //         self.existing_files.insert(file_dir);
-        //         Ok(Operation::stat(self.file(&path).clone()))
-        //     }
-        //     Err(err) => {
-        //         if err.to_string().contains("invalid type") {
-        //             Ok(Operation::no_op())
-        //         } else {
-        //             Err(err)
-        //         }
-        //     }
-        // }
     }
 
     // parse a fstat line
@@ -435,20 +421,6 @@ impl Parser {
                     self.existing_files.insert(file_type);
                     Ok(Operation::fstat(self.file(&path).clone()))
                 }
-
-                // match self.file_type(&args, &path, &format!("fstat: {}", args)) {
-                //     Ok(file_dir) => {
-                //         self.existing_files.insert(file_dir);
-                //         Ok(Operation::fstat(self.file(&path).clone()))
-                //     }
-                //     Err(err) => {
-                //         if err.to_string().contains("invalid type") {
-                //             Ok(Operation::no_op())
-                //         } else {
-                //             Err(err)
-                //         }
-                //     }
-                // }
             }
             None => Ok(Operation::no_op()),
         }
@@ -497,20 +469,6 @@ impl Parser {
             self.existing_files.insert(file_type);
             Ok(Operation::statx(self.file(&path).clone()))
         }
-
-        // match self.file_type(&args, &path, &format!("statx: {}", args)) {
-        //     Ok(file_dir) => {
-        //         self.existing_files.insert(file_dir);
-        //         Ok(Operation::statx(self.file(&path).clone()))
-        //     }
-        //     Err(err) => {
-        //         if err.to_string().contains("invalid type") {
-        //             Ok(Operation::no_op())
-        //         } else {
-        //             Err(err)
-        //         }
-        //     }
-        // }
     }
 
     // parse a fstatat line
@@ -556,23 +514,6 @@ impl Parser {
             self.existing_files.insert(file_type);
             Ok(Operation::fstatat(self.file(&path).clone()))
         }
-
-        // let file_dir = self.file_type(&args, &path, &format!("fstatat: {}", args))?;
-        // self.existing_files.insert(file_dir);
-        //
-        // match self.file_type(&args, &path, &format!("fstatat: {}", args)) {
-        //     Ok(file_dir) => {
-        //         self.existing_files.insert(file_dir);
-        //         Ok(Operation::fstatat(self.file(&path).clone()))
-        //     }
-        //     Err(err) => {
-        //         if err.to_string().contains("invalid type") {
-        //             Ok(Operation::no_op())
-        //         } else {
-        //             Err(err)
-        //         }
-        //     }
-        // }
     }
 
     // parse a statfs line
