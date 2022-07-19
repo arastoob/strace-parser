@@ -13,38 +13,42 @@ use std::sync::Arc;
 pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
-    existing_files: HashSet<FileDir>, // keep existing files info
+    existing_files: HashSet<FileType>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
     ongoing_ops: HashMap<String, String>, // keeping the unfinished operations for each process
 }
 
 #[derive(Debug, Clone, Eq, Hash, PartialEq)]
-pub enum FileDir {
+pub enum FileType {
     File(String, usize), // file path and size
     Dir(String, usize),  // directory path and size
+    Other
 }
 
-impl FileDir {
+impl FileType {
     pub fn path(&self) -> &str {
         match &self {
-            &FileDir::File(ref path, _) => path,
-            &FileDir::Dir(ref path, _) => path,
+            &FileType::File(ref path, _) => path,
+            &FileType::Dir(ref path, _) => path,
+            &FileType::Other => ""
         }
     }
 
     pub fn size(&self) -> &usize {
         match &self {
-            &FileDir::File(_, ref size) => size,
-            &FileDir::Dir(_, ref size) => size,
+            &FileType::File(_, ref size) => size,
+            &FileType::Dir(_, ref size) => size,
+            &FileType::Other => &0
         }
     }
 }
 
-impl std::fmt::Display for FileDir {
+impl std::fmt::Display for FileType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self {
-            &FileDir::File(path, size) => write!(f, "file path: {}, size: {}", path, size),
-            &FileDir::Dir(path, size) => write!(f, "directory path {}, size: {}", path, size),
+            &FileType::File(path, size) => write!(f, "file path: {}, size: {}", path, size),
+            &FileType::Dir(path, size) => write!(f, "directory path {}, size: {}", path, size),
+            &FileType::Other => write!(f, "other file type with no path and size"),
         }
     }
 }
@@ -381,19 +385,27 @@ impl Parser {
         // extract the path from input arguments
         let path = self.path(&args, "stat")?;
 
-        match self.file_dir(&args, &path, &format!("stat: {}", args)) {
-            Ok(file_dir) => {
-                self.existing_files.insert(file_dir);
-                Ok(Operation::stat(self.file(&path).clone()))
-            }
-            Err(err) => {
-                if err.to_string().contains("invalid type") {
-                    Ok(Operation::no_op())
-                } else {
-                    Err(err)
-                }
-            }
+        let file_type = self.file_type(&args, &path, &format!("stat: {}", args))?;
+        if file_type == FileType::Other {
+            return Ok(Operation::no_op());
+        } else {
+            self.existing_files.insert(file_type);
+            Ok(Operation::stat(self.file(&path).clone()))
         }
+
+        // match self.file_type(&args, &path, &format!("stat: {}", args)) {
+        //     Ok(file_dir) => {
+        //         self.existing_files.insert(file_dir);
+        //         Ok(Operation::stat(self.file(&path).clone()))
+        //     }
+        //     Err(err) => {
+        //         if err.to_string().contains("invalid type") {
+        //             Ok(Operation::no_op())
+        //         } else {
+        //             Err(err)
+        //         }
+        //     }
+        // }
     }
 
     // parse a fstat line
@@ -416,19 +428,27 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                match self.file_dir(&args, &path, &format!("fstat: {}", args)) {
-                    Ok(file_dir) => {
-                        self.existing_files.insert(file_dir);
-                        Ok(Operation::fstat(self.file(&path).clone()))
-                    }
-                    Err(err) => {
-                        if err.to_string().contains("invalid type") {
-                            Ok(Operation::no_op())
-                        } else {
-                            Err(err)
-                        }
-                    }
+                let file_type = self.file_type(&args, &path, &format!("fstat: {}", args))?;
+                if file_type == FileType::Other {
+                    Ok(Operation::no_op())
+                } else {
+                    self.existing_files.insert(file_type);
+                    Ok(Operation::fstat(self.file(&path).clone()))
                 }
+
+                // match self.file_type(&args, &path, &format!("fstat: {}", args)) {
+                //     Ok(file_dir) => {
+                //         self.existing_files.insert(file_dir);
+                //         Ok(Operation::fstat(self.file(&path).clone()))
+                //     }
+                //     Err(err) => {
+                //         if err.to_string().contains("invalid type") {
+                //             Ok(Operation::no_op())
+                //         } else {
+                //             Err(err)
+                //         }
+                //     }
+                // }
             }
             None => Ok(Operation::no_op()),
         }
@@ -470,19 +490,27 @@ impl Parser {
             }
         }
 
-        match self.file_dir(&args, &path, &format!("statx: {}", args)) {
-            Ok(file_dir) => {
-                self.existing_files.insert(file_dir);
-                Ok(Operation::statx(self.file(&path).clone()))
-            }
-            Err(err) => {
-                if err.to_string().contains("invalid type") {
-                    Ok(Operation::no_op())
-                } else {
-                    Err(err)
-                }
-            }
+        let file_type = self.file_type(&args, &path, &format!("statx: {}", args))?;
+        if file_type == FileType::Other {
+            Ok(Operation::no_op())
+        } else {
+            self.existing_files.insert(file_type);
+            Ok(Operation::statx(self.file(&path).clone()))
         }
+
+        // match self.file_type(&args, &path, &format!("statx: {}", args)) {
+        //     Ok(file_dir) => {
+        //         self.existing_files.insert(file_dir);
+        //         Ok(Operation::statx(self.file(&path).clone()))
+        //     }
+        //     Err(err) => {
+        //         if err.to_string().contains("invalid type") {
+        //             Ok(Operation::no_op())
+        //         } else {
+        //             Err(err)
+        //         }
+        //     }
+        // }
     }
 
     // parse a fstatat line
@@ -521,22 +549,30 @@ impl Parser {
             }
         }
 
-        let file_dir = self.file_dir(&args, &path, &format!("fstatat: {}", args))?;
-        self.existing_files.insert(file_dir);
-
-        match self.file_dir(&args, &path, &format!("fstatat: {}", args)) {
-            Ok(file_dir) => {
-                self.existing_files.insert(file_dir);
-                Ok(Operation::fstatat(self.file(&path).clone()))
-            }
-            Err(err) => {
-                if err.to_string().contains("invalid type") {
-                    Ok(Operation::no_op())
-                } else {
-                    Err(err)
-                }
-            }
+        let file_type = self.file_type(&args, &path, &format!("fstatat: {}", args))?;
+        if file_type == FileType::Other {
+            Ok(Operation::no_op())
+        } else {
+            self.existing_files.insert(file_type);
+            Ok(Operation::fstatat(self.file(&path).clone()))
         }
+
+        // let file_dir = self.file_type(&args, &path, &format!("fstatat: {}", args))?;
+        // self.existing_files.insert(file_dir);
+        //
+        // match self.file_type(&args, &path, &format!("fstatat: {}", args)) {
+        //     Ok(file_dir) => {
+        //         self.existing_files.insert(file_dir);
+        //         Ok(Operation::fstatat(self.file(&path).clone()))
+        //     }
+        //     Err(err) => {
+        //         if err.to_string().contains("invalid type") {
+        //             Ok(Operation::no_op())
+        //         } else {
+        //             Err(err)
+        //         }
+        //     }
+        // }
     }
 
     // parse a statfs line
@@ -924,12 +960,12 @@ impl Parser {
         Ok(format!("{}{}", dirfd_path, relative))
     }
 
-    fn file_dir(
+    fn file_type(
         &self,
         str: &str,
         path: &str,
         callee: &str,
-    ) -> Result<FileDir, Box<dyn std::error::Error>> {
+    ) -> Result<FileType, Box<dyn std::error::Error>> {
         // extract the file type
         let st_mode: String = str
             .trim()
@@ -949,9 +985,7 @@ impl Parser {
 
         // the mode is not a file or directory
         if !file_type.contains("S_IFREG") && !file_type.contains("S_IFDIR") {
-            return Err(Box::new(Error::InvalidType(
-                "not file or directory".to_string(),
-            )));
+            return Ok(FileType::Other);
         }
 
         // extract the file size
@@ -973,14 +1007,16 @@ impl Parser {
             .parse::<usize>()?;
 
         if file_type.contains("S_IFREG") {
-            Ok(FileDir::File(path.to_string(), file_size))
+            Ok(FileType::File(path.to_string(), file_size))
+        } else if file_type.contains("S_IFDIR") {
+            Ok(FileType::Dir(path.to_string(), file_size))
         } else {
-            Ok(FileDir::Dir(path.to_string(), file_size))
+            Ok(FileType::Other)
         }
     }
 
     // get the list of existing files and directories accessed during log parsing
-    pub fn existing_files(&self) -> Result<HashSet<FileDir>, Box<dyn std::error::Error>> {
+    pub fn existing_files(&self) -> Result<HashSet<FileType>, Box<dyn std::error::Error>> {
         Ok(self.existing_files.clone())
     }
 }

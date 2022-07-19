@@ -8,5 +8,5 @@ mod process;
 
 // re-export the required modules
 pub use op::{Operation, OperationType};
-pub use parser::{FileDir, Parser};
+pub use parser::{FileType, Parser};
 pub use process::Process;
