@@ -12,7 +12,7 @@ use std::sync::Arc;
 
 pub struct Parser {
     log_file: PathBuf,
-    fd_map: HashMap<i32, OpenedFile>, // a map from file descriptor to a OpenedFile struct
+    fd_map: HashMap<(usize, i32), OpenedFile>, // a map from process's file descriptor to an opened file
     existing_files: HashSet<FileType>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
     ongoing_ops: HashMap<String, String>, // keeping the unfinished operations for each process
@@ -46,9 +46,9 @@ impl FileType {
 impl std::fmt::Display for FileType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match &self {
-            &FileType::File(path, size) => write!(f, "file path: {}, size: {}", path, size),
-            &FileType::Dir(path, size) => write!(f, "directory path {}, size: {}", path, size),
-            &FileType::Other => write!(f, "other file type with no path and size"),
+            &FileType::File(path, size) => writeln!(f, "file path: {}, size: {}", path, size),
+            &FileType::Dir(path, size) => writeln!(f, "directory path {}, size: {}", path, size),
+            &FileType::Other => writeln!(f, "other file type with no path and size"),
         }
     }
 }
@@ -122,52 +122,52 @@ impl Parser {
 
                     match op.as_ref() {
                         "openat" => {
-                            for operation in self.openat(args, ret)? {
+                            for operation in self.openat(pid, args, ret)? {
                                 process.add_op(operation.into());
                             }
                         }
                         "fcntl" => {
-                            process.add_op(self.fcntl(args, ret)?.into());
+                            process.add_op(self.fcntl(pid, args, ret)?.into());
                         }
                         "read" => {
                             // read op updates the file offset
-                            process.add_op(self.read(args)?.into());
+                            process.add_op(self.read(pid, args)?.into());
                         }
                         "stat" => {
                             process.add_op(self.stat(args)?.into());
                         }
                         "fstat" => {
-                            process.add_op(self.fstat(args)?.into());
+                            process.add_op(self.fstat(pid, args)?.into());
                         }
                         "statx" => {
-                            process.add_op(self.statx(args)?.into());
+                            process.add_op(self.statx(pid, args)?.into());
                         }
                         "statfs" => {
                             process.add_op(self.statfs(args)?.into());
                         }
                         op if op == "fstatat64" || op == "newfstatat" || op == "fstatat" => {
-                            process.add_op(self.fstatat(args)?.into());
+                            process.add_op(self.fstatat(pid, args)?.into());
                         }
                         "pread" => {
-                            process.add_op(self.pread(args)?.into());
+                            process.add_op(self.pread(pid, args)?.into());
                         }
                         "getrandom" => {
                             process.add_op(self.get_random(args)?.into());
                         }
                         "write" => {
-                            process.add_op(self.write(args)?.into());
+                            process.add_op(self.write(pid, args)?.into());
                         }
                         "mkdir" => {
                             process.add_op(self.mkdir(args)?.into());
                         }
                         "unlinkat" => {
-                            process.add_op(self.unlink(args)?.into());
+                            process.add_op(self.unlink(pid, args)?.into());
                         }
                         "rename" => {
                             process.add_op(self.rename(args)?.into());
                         }
                         op if op == "renameat" || op == "renameat2" => {
-                            process.add_op(self.renameat(args)?.into());
+                            process.add_op(self.renameat(pid, args)?.into());
                         }
                         "clone" => {
                             process.add_op(self.clone(ret)?.into());
@@ -190,6 +190,7 @@ impl Parser {
     // parse an openat line
     fn openat(
         &mut self,
+        pid: usize,
         args: String,
         ret: String,
     ) -> Result<Vec<Operation>, Box<dyn std::error::Error>> {
@@ -208,6 +209,9 @@ impl Parser {
         //      O_CREAT: If pathname does not exist, create it as a regular file.
         //      O_TRUNC: If the file already exists and is a regular file and the access mode allows
         //               writing (i.e., is O_RDWR or O_WRONLY) it will be truncated to length 0.
+        //      O_DIRECTORY: the pathname is a directory. If  pathname is not a directory, cause the
+        //                   open to fail.  This flag was added in kernel version 2.1.126, to avoid
+        //                   denial-of-service problems if opendir(3) is called on a FIFO or tape device.
 
         let fd = ret.trim().parse::<i32>()?;
 
@@ -227,7 +231,7 @@ impl Parser {
                 .0;
             if !dirfd.contains("AT_FDCWD") {
                 // dirfd should be a valid file descriptor, so the input path is a relative path.
-                path = self.relative_to_absolute(dirfd, &path)?;
+                path = self.relative_to_absolute(pid, dirfd, &path)?;
             }
         }
 
@@ -253,6 +257,12 @@ impl Parser {
 
         let mut operations = vec![];
 
+        if flags.contains("O_DIRECTORY") {
+            // the path is a directory, so don't check other file-related flags
+            operations.push(Operation::open_at(self.file(&path).clone(), 0));
+            return Ok(operations);
+        }
+
         if flags.contains("O_CREAT") {
             operations.push(Operation::mknod(self.file(&path).clone()));
         }
@@ -260,10 +270,10 @@ impl Parser {
         if flags.contains("O_TRUNC") {
             operations.push(Operation::truncate(self.file(&path).clone()));
 
-            self.fd_map.insert(fd, OpenedFile::new(path.clone(), 0, 0));
+            self.fd_map.insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
         }
 
-        let offset = match self.fd_map.get(&fd) {
+        let offset = match self.fd_map.get(&(pid, fd)) {
             Some(of) => {
                 // we have already seen the file
                 let offset = of.offset;
@@ -271,17 +281,17 @@ impl Parser {
                 if flags.contains("O_APPEND") {
                     // the file offset should point to the end
                     self.fd_map
-                        .insert(fd, OpenedFile::new(path.clone(), size as i32, size));
+                        .insert((pid, fd), OpenedFile::new(path.clone(), size as i32, size));
                     size as i32
                 } else {
                     self.fd_map
-                        .insert(fd, OpenedFile::new(path.clone(), offset, size));
+                        .insert((pid, fd), OpenedFile::new(path.clone(), offset, size));
                     offset
                 }
             }
             None => {
                 // the file is opened for the first time
-                self.fd_map.insert(fd, OpenedFile::new(path.clone(), 0, 0));
+                self.fd_map.insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
                 0
             }
         };
@@ -295,6 +305,7 @@ impl Parser {
     // parse a fcntl line
     fn fcntl(
         &mut self,
+        pid: usize,
         args: String,
         ret: String,
     ) -> Result<Operation, Box<dyn std::error::Error>> {
@@ -322,14 +333,14 @@ impl Parser {
             .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC"))
             .is_some()
         {
-            if let Some(fd_of) = self.fd_map.get(&fd) {
+            if let Some(fd_of) = self.fd_map.get(&(pid, fd)) {
                 let fd_path = fd_of.path.clone();
                 let offset = fd_of.offset;
                 let size = fd_of.size;
 
                 // add the duplicated fd to the map
                 self.fd_map
-                    .insert(dup_fd, OpenedFile::new(fd_path, offset, size));
+                    .insert((pid, dup_fd), OpenedFile::new(fd_path, offset, size));
             }
         }
 
@@ -337,7 +348,7 @@ impl Parser {
     }
 
     // parse a read line
-    fn read(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn read(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t read(int fd, void *buf, size_t count);
         // attempts to read up to count bytes from file descriptor fd into the buffer starting at buf.
         //
@@ -351,7 +362,7 @@ impl Parser {
         let len = parts[parts.len() - 1].trim().parse::<usize>()?;
 
         // find the read path based on the file descriptor
-        match self.fd_map.get(&fd) {
+        match self.fd_map.get(&(pid, fd)) {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
                 let offset = opend_file.offset;
@@ -359,7 +370,7 @@ impl Parser {
 
                 // update the offset of the opened file in the fd_map
                 self.fd_map
-                    .insert(fd, OpenedFile::new(path.clone(), offset + len as i32, size));
+                    .insert((pid, fd), OpenedFile::new(path.clone(), offset + len as i32, size));
 
                 Ok(Operation::read(self.file(&path).clone(), len, offset))
             }
@@ -395,7 +406,7 @@ impl Parser {
     }
 
     // parse a fstat line
-    fn fstat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -410,7 +421,7 @@ impl Parser {
         let fd = fd.trim().parse::<i32>()?;
 
         // find the path based on the file descriptor
-        match self.fd_map.get(&fd) {
+        match self.fd_map.get(&(pid, fd)) {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
@@ -427,7 +438,7 @@ impl Parser {
     }
 
     // parse a statx line
-    fn statx(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn statx(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int statx(int dirfd, const char *pathname, int flags,
         //                  unsigned int mask, struct statx *statxbuf);
         //  returns information about a file, storing it in the buffer pointed to by statxbuf.
@@ -458,7 +469,7 @@ impl Parser {
                 .0;
             if !dirfd.contains("AT_FDCWD") {
                 // dirfd should be a valid file descriptor, so the input path is a relative path.
-                path = self.relative_to_absolute(dirfd, &path)?;
+                path = self.relative_to_absolute(pid, dirfd, &path)?;
             }
         }
 
@@ -472,7 +483,7 @@ impl Parser {
     }
 
     // parse a fstatat line
-    fn fstatat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstatat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstatat(int dirfd, const char *pathname, struct stat *statbuf,
         //                    int flags);
         //  return information about a file, in the buffer pointed to by statbuf
@@ -503,7 +514,7 @@ impl Parser {
                 .0;
             if !dirfd.contains("AT_FDCWD") {
                 // dirfd should be a valid file descriptor, so the input path is a relative path.
-                path = self.relative_to_absolute(dirfd, &path)?;
+                path = self.relative_to_absolute(pid, dirfd, &path)?;
             }
         }
 
@@ -536,7 +547,7 @@ impl Parser {
     }
 
     // parse a read line
-    fn pread(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn pread(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t pread(int fd, void *buf, size_t count, off_t offset);
         // reads  up  to  count  bytes from file descriptor fd at offset offset
         // (from the start of the file) into the buffer starting at buf.  The file offset is not changed.
@@ -553,7 +564,7 @@ impl Parser {
         let offset = parts[parts.len() - 1].trim().parse::<i32>()?;
 
         // find the read path based on the file descriptor
-        let path = match self.fd_map.get(&fd) {
+        let path = match self.fd_map.get(&(pid, fd)) {
             Some(opend_file) => opend_file.path.clone(),
             None => {
                 // For some reason the fd is not available. One case is having an operation
@@ -567,7 +578,7 @@ impl Parser {
     }
 
     // parse a write line
-    fn write(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn write(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // ssize_t write(int fd, const void *buf, size_t count);
         // writes up to count bytes from the buffer starting at buf to the file referred to
         // by the file descriptor fd.
@@ -586,7 +597,7 @@ impl Parser {
         }
 
         // find the write path based on the file descriptor
-        match self.fd_map.get(&fd) {
+        match self.fd_map.get(&(pid, fd)) {
             Some(of) => {
                 let path = of.path.clone();
                 let offset = of.offset;
@@ -596,7 +607,7 @@ impl Parser {
 
                 // update the offset and size of the opened file in the fd_map
                 self.fd_map
-                    .insert(fd, OpenedFile::new(path, offset + len as i32, size + len));
+                    .insert((pid, fd), OpenedFile::new(path, offset + len as i32, size + len));
 
                 Ok(op)
             }
@@ -628,7 +639,7 @@ impl Parser {
     }
 
     // parse a unlink line
-    fn unlink(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn unlink(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int unlinkat(int dirfd, const char *pathname, int flags);
         // deletes a name from the filesystem.  If that name was the last link to a file and no
         // processes have the file open, the file is deleted and the space it was using is made
@@ -659,7 +670,7 @@ impl Parser {
                 .0;
             if !dirfd.contains("AT_FDCWD") {
                 // dirfd should be a valid file descriptor, so the input path is a relative path.
-                path = self.relative_to_absolute(dirfd, &path)?;
+                path = self.relative_to_absolute(pid, dirfd, &path)?;
             }
         }
 
@@ -689,7 +700,7 @@ impl Parser {
     }
 
     // parse a renameat line
-    fn renameat(&mut self, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn renameat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -716,12 +727,12 @@ impl Parser {
 
         if !PathBuf::from(old.clone()).is_absolute() && !dirfd1.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            old = self.relative_to_absolute(dirfd1, &old)?;
+            old = self.relative_to_absolute(pid, dirfd1, &old)?;
         }
 
         if !PathBuf::from(new.clone()).is_absolute() && !dirfd2.contains("AT_FDCWD") {
             // dirfd should be a valid file descriptor, so the input path is a relative path.
-            new = self.relative_to_absolute(dirfd2, &new)?;
+            new = self.relative_to_absolute(pid, dirfd2, &new)?;
         }
 
         Ok(Operation::rename(self.file(&old).clone(), new))
@@ -886,6 +897,7 @@ impl Parser {
     // convert a relative path to absolute
     fn relative_to_absolute(
         &self,
+        pid: usize,
         dirfd: &str,
         relative: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
@@ -893,7 +905,7 @@ impl Parser {
         let dirfd = dirfd.trim().parse::<i32>()?;
         let dirfd_path = self
             .fd_map
-            .get(&dirfd)
+            .get(&(pid, dirfd))
             .ok_or(Error::NotFound(format!("file descriptor {}", dirfd)))?
             .path
             .clone();
@@ -1083,8 +1095,8 @@ mod test {
     fn openat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "909193 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 9".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let operations = parser.openat(pid, args, ret)?;
             assert_eq!(operations.len(), 1);
             assert_eq!(
                 operations
@@ -1100,8 +1112,8 @@ mod test {
         let line =
             "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_CLOEXEC, 0666) = 7"
                 .to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let operations = parser.openat(pid, args, ret)?;
             assert_eq!(operations.len(), 2);
             assert_eq!(
                 operations
@@ -1124,8 +1136,8 @@ mod test {
         let line =
             "909193 openat(AT_FDCWD, \"another_path\", O_RDONLY|O_CREAT|O_APPEND|O_TRUNC, 0666) = 7"
                 .to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let operations = parser.openat(pid, args, ret)?;
             assert_eq!(operations.len(), 3);
             assert_eq!(
                 operations
@@ -1159,8 +1171,8 @@ mod test {
     fn read() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
-            let _operation = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
+            let _operation = parser.openat(pid, args, ret)?;
         } else {
             panic!(
                 "{}",
@@ -1169,8 +1181,8 @@ mod test {
         }
 
         let read_line1 = "909196 read(3, buf, 50) = 50".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
-            let read_op1 = parser.read(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&read_line1)? {
+            let read_op1 = parser.read(pid, args)?;
             assert_eq!(
                 read_op1.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 0, 50)
@@ -1180,8 +1192,8 @@ mod test {
         }
 
         let read_line2 = "909196 read(3, buf, 20) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
-            let read_op2 = parser.read(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&read_line2)? {
+            let read_op2 = parser.read(pid, args)?;
             assert_eq!(
                 read_op2.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 50, 20)
@@ -1197,8 +1209,8 @@ mod test {
     fn pread() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
-            let _operation = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
+            let _operation = parser.openat(pid, args, ret)?;
         } else {
             panic!(
                 "{}",
@@ -1207,8 +1219,8 @@ mod test {
         }
 
         let read_line1 = "909196 pread(3, buf, 50, 100) = 50".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line1)? {
-            let pread_op1 = parser.pread(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&read_line1)? {
+            let pread_op1 = parser.pread(pid, args)?;
             assert_eq!(
                 pread_op1.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 100, 50)
@@ -1218,8 +1230,8 @@ mod test {
         }
 
         let read_line2 = "909196 pread(3, buf, 20, 500) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line2)? {
-            let pread_op2 = parser.pread(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&read_line2)? {
+            let pread_op2 = parser.pread(pid, args)?;
             assert_eq!(
                 pread_op2.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 500, 20)
@@ -1230,8 +1242,8 @@ mod test {
 
         // the previous pread ops should not update the opened file offset
         let read_line3 = "909196 read(3, buf, 20) = 20".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&read_line3)? {
-            let read_op = parser.read(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&read_line3)? {
+            let read_op = parser.read(pid, args)?;
             assert_eq!(
                 read_op.op_type(),
                 &OperationType::Read(Arc::new(File::new("a_path")), 0, 20)
@@ -1247,16 +1259,16 @@ mod test {
     fn write() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let _operations = parser.openat(pid, args, ret)?;
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
         }
 
         // first write
         let write_line1 = "909196 write(5, some content here, 17) = 17".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line1)? {
-            let write_op1 = parser.write(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&write_line1)? {
+            let write_op1 = parser.write(pid, args)?;
             assert_eq!(
                 write_op1.op_type(),
                 &OperationType::Write(
@@ -1275,8 +1287,8 @@ mod test {
 
         // second write
         let write_line2 = "909196 write(5, hello, 5) = 5".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
-            let write_op2 = parser.write(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&write_line2)? {
+            let write_op2 = parser.write(pid, args)?;
             assert_eq!(
                 write_op2.op_type(),
                 &OperationType::Write(Arc::new(File::new("a_path")), 17, 5, "hello".to_string())
@@ -1290,24 +1302,24 @@ mod test {
 
         // open the file one more time to check the offset
         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CREAT) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let _operations = parser.openat(pid, args, ret)?;
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
         }
 
         // now open the file with truncate flag, which should zero the size and offset
         let line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_TRUNC) = 5".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&line)? {
-            let _operations = parser.openat(args, ret)?;
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&line)? {
+            let _operations = parser.openat(pid, args, ret)?;
         } else {
             panic!("{}", format!("could not get the parts from {}", line));
         }
 
         // write after truncate
         let write_line2 = "909196 write(5, some other content here, 10) = 10".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&write_line2)? {
-            let write_op2 = parser.write(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&write_line2)? {
+            let write_op2 = parser.write(pid, args)?;
             assert_eq!(
                 write_op2.op_type(),
                 &OperationType::Write(
@@ -1345,9 +1357,9 @@ mod test {
     fn fstat() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
-        if let Parts::Finished(_, _, args, ret) = parser.parts(&openat_line)? {
+        if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
             println!("args: {}", args);
-            let _operation = parser.openat(args, ret)?;
+            let _operation = parser.openat(pid, args, ret)?;
         } else {
             panic!(
                 "{}",
@@ -1357,8 +1369,8 @@ mod test {
 
         let fstat_line =
             "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&fstat_line)? {
-            let fstat_op = parser.fstat(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&fstat_line)? {
+            let fstat_op = parser.fstat(pid, args)?;
             assert_eq!(
                 fstat_op.op_type(),
                 &OperationType::Fstat(Arc::new(File::new("a_path")))
@@ -1420,8 +1432,8 @@ mod test {
         let line =
             "909196 renameat2(AT_FDCWD, \"old_path\", AT_FDCWD, \"new_path\", RENAME_NOREPLACE) = 0"
                 .to_string();
-        if let Parts::Finished(_, _, args, _) = parser.parts(&line)? {
-            let operation = parser.renameat(args)?;
+        if let Parts::Finished(pid, _, args, _) = parser.parts(&line)? {
+            let operation = parser.renameat(pid, args)?;
             assert_eq!(
                 operation.op_type(),
                 &OperationType::Rename(Arc::new(File::new("old_path")), "new_path".to_string())
@@ -1430,6 +1442,16 @@ mod test {
             panic!("{}", format!("could not get the parts from {}", line));
         }
 
+        Ok(())
+    }
+
+    #[test]
+    fn temp() -> Result<(), Box<dyn std::error::Error>> {
+        let path = PathBuf::from("/home/arastoo/Desktop/fs-bench1/trace_workload/.deps/ipc.Tpo");
+        // let mut parents = path.clone();
+        // parents.pop();
+        path.canonicalize().unwrap();
+        println!("path: {:?}", path);
         Ok(())
     }
 }
