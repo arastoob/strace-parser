@@ -13,7 +13,7 @@ use std::sync::Arc;
 pub struct Parser {
     log_file: PathBuf,
     fd_map: HashMap<(usize, i32), OpenedFile>, // a map from process's file descriptor to an opened file
-    process_cwd: HashMap<usize, String>, // the current working directory of a process
+    process_cwd: HashMap<usize, String>,       // the current working directory of a process
     cwd: String, // the global current working directory. when a process is created, its cwd is set to this
     existing_files: HashSet<FileType>, // keep existing files info
     accessed_files: HashMap<String, Arc<File>>, // all the files and directories accessed by processes
@@ -24,7 +24,7 @@ pub struct Parser {
 pub enum FileType {
     File(String, usize), // file path and size
     Dir(String, usize),  // directory path and size
-    Other
+    Other,
 }
 
 impl FileType {
@@ -32,7 +32,7 @@ impl FileType {
         match &self {
             &FileType::File(ref path, _) => path,
             &FileType::Dir(ref path, _) => path,
-            &FileType::Other => ""
+            &FileType::Other => "",
         }
     }
 
@@ -40,7 +40,7 @@ impl FileType {
         match &self {
             &FileType::File(_, ref size) => size,
             &FileType::Dir(_, ref size) => size,
-            &FileType::Other => &0
+            &FileType::Other => &0,
         }
     }
 }
@@ -287,7 +287,8 @@ impl Parser {
             // the path is a directory, so don't check other file-related flags
             operations.push(Operation::open_at(self.file(&path).clone(), 0));
             // the opened file is a directory with no size and offset
-            self.fd_map.insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
+            self.fd_map
+                .insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
             return Ok(operations);
         }
 
@@ -298,7 +299,8 @@ impl Parser {
         if flags.contains("O_TRUNC") {
             operations.push(Operation::truncate(self.file(&path).clone()));
 
-            self.fd_map.insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
+            self.fd_map
+                .insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
         }
 
         let offset = match self.fd_map.get(&(pid, fd)) {
@@ -319,7 +321,8 @@ impl Parser {
             }
             None => {
                 // the file is opened for the first time
-                self.fd_map.insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
+                self.fd_map
+                    .insert((pid, fd), OpenedFile::new(path.clone(), 0, 0));
                 0
             }
         };
@@ -393,7 +396,11 @@ impl Parser {
 
         if parts
             .iter()
-            .find(|&&val| val.contains("F_DUPFD") || val.contains("F_DUPFD_CLOEXEC") || val.contains("F_SETFD"))
+            .find(|&&val| {
+                val.contains("F_DUPFD")
+                    || val.contains("F_DUPFD_CLOEXEC")
+                    || val.contains("F_SETFD")
+            })
             .is_some()
         {
             if let Some(fd_of) = self.fd_map.get(&(pid, fd)) {
@@ -432,8 +439,10 @@ impl Parser {
                 let size = opend_file.size;
 
                 // update the offset of the opened file in the fd_map
-                self.fd_map
-                    .insert((pid, fd), OpenedFile::new(path.clone(), offset + len as i32, size));
+                self.fd_map.insert(
+                    (pid, fd),
+                    OpenedFile::new(path.clone(), offset + len as i32, size),
+                );
 
                 Ok(Operation::read(self.file(&path).clone(), len, offset))
             }
@@ -469,7 +478,12 @@ impl Parser {
     }
 
     // parse a fstat line
-    fn fstat(&mut self, pid: usize, args: String, line_no: usize) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(
+        &mut self,
+        pid: usize,
+        args: String,
+        line_no: usize,
+    ) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -488,7 +502,11 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                let file_type = self.file_type(&args, &path, &format!("fstat: {} at line {}", args, line_no))?;
+                let file_type = self.file_type(
+                    &args,
+                    &path,
+                    &format!("fstat: {} at line {}", args, line_no),
+                )?;
                 if file_type == FileType::Other {
                     Ok(Operation::no_op())
                 } else {
@@ -546,7 +564,11 @@ impl Parser {
     }
 
     // parse a fstatat line
-    fn fstatat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstatat(
+        &mut self,
+        pid: usize,
+        args: String,
+    ) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstatat(int dirfd, const char *pathname, struct stat *statbuf,
         //                    int flags);
         //  return information about a file, in the buffer pointed to by statbuf
@@ -669,8 +691,10 @@ impl Parser {
                 let op = Operation::write(self.file(&path).clone(), content, len, offset);
 
                 // update the offset and size of the opened file in the fd_map
-                self.fd_map
-                    .insert((pid, fd), OpenedFile::new(path, offset + len as i32, size + len));
+                self.fd_map.insert(
+                    (pid, fd),
+                    OpenedFile::new(path, offset + len as i32, size + len),
+                );
 
                 Ok(op)
             }
@@ -702,7 +726,11 @@ impl Parser {
     }
 
     // parse a unlink line
-    fn unlink(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn unlink(
+        &mut self,
+        pid: usize,
+        args: String,
+    ) -> Result<Operation, Box<dyn std::error::Error>> {
         // int unlinkat(int dirfd, const char *pathname, int flags);
         // deletes a name from the filesystem.  If that name was the last link to a file and no
         // processes have the file open, the file is deleted and the space it was using is made
@@ -763,7 +791,11 @@ impl Parser {
     }
 
     // parse a renameat line
-    fn renameat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn renameat(
+        &mut self,
+        pid: usize,
+        args: String,
+    ) -> Result<Operation, Box<dyn std::error::Error>> {
         // int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath);
         // renames  a  file,  moving it between directories if required.  Any other hard links to
         // the file (as created using link(2)) are unaffected.  Open file descriptors for oldpath
@@ -1233,7 +1265,8 @@ mod test {
     #[test]
     fn read() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "909196 openat(AT_FDCWD, \"/a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line =
+            "909196 openat(AT_FDCWD, \"/a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
         if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
             let _operation = parser.openat(pid, args, ret)?;
         } else {
@@ -1271,7 +1304,8 @@ mod test {
     #[test]
     fn pread() -> Result<(), Box<dyn std::error::Error>> {
         let mut parser = Parser::new(PathBuf::new());
-        let openat_line = "909196 openat(AT_FDCWD, \"/a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
+        let openat_line =
+            "909196 openat(AT_FDCWD, \"/a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
         if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
             let _operation = parser.openat(pid, args, ret)?;
         } else {
