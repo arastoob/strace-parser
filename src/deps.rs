@@ -81,7 +81,7 @@ impl DependencyGraph {
     pub fn mark_dependencies(&self) -> Result<(), Error> {
         for node in self.dag.nodes() {
             if node.in_degree() > 1 {
-                // the file node, say f1, which have accessed more than one time
+                // the file node, say f1, which has been accessed more than one time
                 if let Some(edges) = self.dag.edges_to(node.clone()) {
                     for current_edge in edges.iter() {
                         // edges to f1
