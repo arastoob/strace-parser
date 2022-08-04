@@ -10,3 +10,4 @@ mod process;
 pub use op::{Operation, OperationType};
 pub use parser::{FileType, Parser};
 pub use process::Process;
+pub use deps::DependencyGraph;
