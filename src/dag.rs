@@ -1,9 +1,9 @@
+use crate::error::Error;
 use std::cell::{Ref, RefCell, RefMut};
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
-use crate::error::Error;
 
 ///
 /// A Directed Acyclic Graph
@@ -54,10 +54,14 @@ where
             self.nodes.push(node.clone());
             Ok(node)
         } else {
-            Ok(self.nodes
+            Ok(self
+                .nodes
                 .iter()
                 .find(|n| n.data == node.data)
-                .ok_or(Error::NoneValue(format!("the find result of {}", node.data())))?
+                .ok_or(Error::NoneValue(format!(
+                    "the find result of {}",
+                    node.data()
+                )))?
                 .clone())
         }
     }
@@ -220,7 +224,6 @@ where
             stack.push(node);
         }
     }
-
 }
 
 impl<N, L> Display for DAG<N, L>
@@ -332,10 +335,7 @@ where
     }
 
     fn remove_outgoing_neighbor(&self, neighbor: Rc<Node<N>>) {
-        self
-            .out_neighbors
-            .borrow_mut()
-            .retain(|n| **n != *neighbor);
+        self.out_neighbors.borrow_mut().retain(|n| **n != *neighbor);
     }
 
     fn add_incoming_neighbor(&self, neighbor: &Rc<Node<N>>) {
@@ -352,8 +352,7 @@ where
     }
 
     fn remove_incoming_neighbor(&self, neighbor: &Rc<Node<N>>) {
-        self
-            .in_neighbors
+        self.in_neighbors
             .borrow_mut()
             .retain(|n| !Weak::ptr_eq(n, &Rc::downgrade(neighbor)));
         *self.in_degree.borrow_mut() -= 1;
@@ -437,8 +436,8 @@ where
 #[cfg(test)]
 mod test {
     use crate::dag::DAG;
-    use std::rc::{Rc, Weak};
     use crate::error::Error;
+    use std::rc::{Rc, Weak};
 
     #[test]
     fn add_node() -> Result<(), Error> {
@@ -504,7 +503,12 @@ mod test {
 
         let edges = dag.edges_to(n3.clone());
         assert!(edges.is_some());
-        assert_eq!(edges.ok_or(Error::NoneValue("dag edges".to_string()))?.len(), 2);
+        assert_eq!(
+            edges
+                .ok_or(Error::NoneValue("dag edges".to_string()))?
+                .len(),
+            2
+        );
 
         let edges = dag.edges_to(n2.clone());
         assert!(edges.is_some());
@@ -563,7 +567,12 @@ mod test {
 
         let edges = dag.edges_to(n3.clone());
         assert!(edges.is_some());
-        assert_eq!(edges.ok_or(Error::NoneValue("dag edges".to_string()))?.len(), 2);
+        assert_eq!(
+            edges
+                .ok_or(Error::NoneValue("dag edges".to_string()))?
+                .len(),
+            2
+        );
 
         let edges = dag.edges_to(n2.clone());
         assert!(edges.is_some());
@@ -644,7 +653,6 @@ mod test {
 
     #[test]
     fn topological_sort() -> Result<(), Error> {
-
         let mut dag = DAG::new();
         let node0 = dag.add_node(0)?;
         let node1 = dag.add_node(1)?;

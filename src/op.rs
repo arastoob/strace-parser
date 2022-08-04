@@ -35,9 +35,7 @@ pub struct Operation {
 
 impl Operation {
     pub fn new(op_type: OperationType) -> Self {
-        Operation {
-            op_type,
-        }
+        Operation { op_type }
     }
 
     pub fn read(file: Arc<File>, len: usize, offset: i32) -> Self {
@@ -200,11 +198,7 @@ impl fmt::Display for OperationType {
 
 impl Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.op_type,
-        )?;
+        write!(f, "{}", self.op_type,)?;
 
         Ok(())
     }

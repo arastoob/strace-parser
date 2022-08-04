@@ -29,7 +29,7 @@ impl fmt::Display for Error {
             &Error::InvalidType(ref detail) => write!(f, "invalid type: {}", detail),
             &Error::PoisonError(ref detail) => {
                 write!(f, "could not acquire a lock oh shared object: {}", detail)
-            },
+            }
             &Error::NoneValue(ref detail) => write!(f, "value is none: {}", detail),
         }
     }

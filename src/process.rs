@@ -1,7 +1,7 @@
 // use crate::op::SharedOperation;
+use crate::Operation;
 use std::fmt::Formatter;
 use std::hash::Hash;
-use crate::Operation;
 
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Process {

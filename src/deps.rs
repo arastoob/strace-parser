@@ -1,4 +1,4 @@
-use crate::dag::{DAG, Edge};
+use crate::dag::{Edge, DAG};
 use crate::error::Error;
 use crate::file::File;
 use crate::process::Process;
@@ -13,7 +13,7 @@ pub enum GraphNode {
     Process(Process),
     File(Arc<File>),
     Start,
-    End
+    End,
 }
 
 impl GraphNode {
@@ -22,7 +22,7 @@ impl GraphNode {
             &GraphNode::File(_) => "file",
             &GraphNode::Process(_) => "process",
             &GraphNode::Start => "start",
-            &GraphNode::End => "end"
+            &GraphNode::End => "end",
         }
     }
 
@@ -106,8 +106,10 @@ impl DependencyGraph {
                         // the process node, say p1
                         let source = edge.source();
 
-                        let pnode = read_write_dag.add_node(GraphNode::Process(source.data().process()?.clone()))?;
-                        let fnode = read_write_dag.add_node(GraphNode::File(node.data().file()?))?;
+                        let pnode = read_write_dag
+                            .add_node(GraphNode::Process(source.data().process()?.clone()))?;
+                        let fnode =
+                            read_write_dag.add_node(GraphNode::File(node.data().file()?))?;
 
                         if edge.label().as_str() == "Write" {
                             // add an edge from p1 to f1 with Write lable
@@ -130,13 +132,18 @@ impl DependencyGraph {
             if node.data().ty() == "file" {
                 if !node.incoming_neighbors().is_empty() {
                     for incoming_process in node.incoming_neighbors().iter() {
-                        let incoming_process = incoming_process.upgrade()
-                            .ok_or(Error::NoneValue("weak reference to process node".to_string()))?;
-                        let p1 = process_dag.add_node(GraphNode::Process(incoming_process.data().process()?.clone()))?;
+                        let incoming_process = incoming_process.upgrade().ok_or(
+                            Error::NoneValue("weak reference to process node".to_string()),
+                        )?;
+                        let p1 = process_dag.add_node(GraphNode::Process(
+                            incoming_process.data().process()?.clone(),
+                        ))?;
 
                         if !node.outgoing_neighbors().is_empty() {
                             for outgoing_process in node.outgoing_neighbors().iter() {
-                                let p2 = process_dag.add_node(GraphNode::Process(outgoing_process.data().process()?.clone()))?;
+                                let p2 = process_dag.add_node(GraphNode::Process(
+                                    outgoing_process.data().process()?.clone(),
+                                ))?;
                                 process_dag.add_edge("".to_string(), p1.clone(), p2);
                             }
                         } else {
@@ -146,7 +153,9 @@ impl DependencyGraph {
                 } else {
                     // there is no incoming edges to the file node, it means that it has only been read
                     for outgoing_process in node.outgoing_neighbors().iter() {
-                        let p2 = process_dag.add_node(GraphNode::Process(outgoing_process.data().process()?.clone()))?;
+                        let p2 = process_dag.add_node(GraphNode::Process(
+                            outgoing_process.data().process()?.clone(),
+                        ))?;
                         process_dag.add_edge("".to_string(), start_node.clone(), p2);
                     }
                 }
@@ -157,7 +166,7 @@ impl DependencyGraph {
         process_dag.remove_node(&start_node);
         process_dag.remove_node(&end_node);
 
-        Ok(Self {dag: process_dag})
+        Ok(Self { dag: process_dag })
     }
 
     fn simplify(&self) -> Result<Self, Error> {
@@ -170,8 +179,10 @@ impl DependencyGraph {
                     if let Some(edges) = self.dag.edges_between(node.clone(), neighbour.clone()) {
                         let summarized_label = self.summarize_edges(&edges)?;
 
-                        let pnode = simplified.add_node(GraphNode::Process(node.data().process()?.clone()))?;
-                        let fnode = simplified.add_node(GraphNode::File(neighbour.data().file()?))?;
+                        let pnode = simplified
+                            .add_node(GraphNode::Process(node.data().process()?.clone()))?;
+                        let fnode =
+                            simplified.add_node(GraphNode::File(neighbour.data().file()?))?;
                         simplified.add_edge(summarized_label, pnode, fnode);
                     }
                 }
@@ -182,12 +193,14 @@ impl DependencyGraph {
     }
 
     fn summarize_edges(&self, edges: &Vec<Rc<Edge<GraphNode, String>>>) -> Result<String, Error> {
-        let write_filter = edges.iter()
-            .filter(|edge| edge.label() == "Mkdir" ||
-                edge.label() == "Mknod" ||
-                edge.label() == "Write" ||
-                edge.label() == "Truncate"
-            )
+        let write_filter = edges
+            .iter()
+            .filter(|edge| {
+                edge.label() == "Mkdir"
+                    || edge.label() == "Mknod"
+                    || edge.label() == "Write"
+                    || edge.label() == "Truncate"
+            })
             .collect::<Vec<_>>();
 
         if !write_filter.is_empty() {
@@ -197,14 +210,15 @@ impl DependencyGraph {
         }
     }
 
-
     pub fn available_set(&mut self) -> Result<Vec<Process>, Box<dyn std::error::Error>> {
         if self.dag.nodes().len() == 0 {
             return Ok(vec![]);
         }
 
         // get the nodes with in-degree of 0
-        let mut first_level_nodes = self.dag.nodes()
+        let mut first_level_nodes = self
+            .dag
+            .nodes()
             .filter(|node| node.in_degree() == 0)
             .cloned()
             .collect::<Vec<_>>();
@@ -213,8 +227,14 @@ impl DependencyGraph {
         if first_level_nodes.len() > 1 {
             // there is more than one process nodes with in-degree of 0, so pick the one
             // with lower pid
-            first_level_nodes.sort_by(|n1, n2|
-                n1.data().process().unwrap().pid().partial_cmp(&n2.data().process().unwrap().pid()).unwrap());
+            first_level_nodes.sort_by(|n1, n2| {
+                n1.data()
+                    .process()
+                    .unwrap()
+                    .pid()
+                    .partial_cmp(&n2.data().process().unwrap().pid())
+                    .unwrap()
+            });
         }
 
         let mut available_set = vec![];
@@ -254,15 +274,11 @@ mod test {
         let read_f1_op = Operation::read(f1.clone(), 1, 1);
         let mknod_f2_op1 = Operation::mknod(f2.clone());
         let mknod_f2_op2 = Operation::mknod(f2.clone());
-        let write_f2_op1 =
-            Operation::write(f2.clone(), "something".to_string(), 1, 1);
-        let write_f4_op =
-            Operation::write(f4.clone(), "something".to_string(), 1, 1);
+        let write_f2_op1 = Operation::write(f2.clone(), "something".to_string(), 1, 1);
+        let write_f4_op = Operation::write(f4.clone(), "something".to_string(), 1, 1);
         let remove_f2_op = Operation::remove(f2.clone());
-        let mkdir_d1_op =
-            Operation::mkdir(d1.clone(), "a_mode".to_string());
-        let write_f2_op2 =
-            Operation::write(f2.clone(), "something".to_string(), 1, 1);
+        let mkdir_d1_op = Operation::mkdir(d1.clone(), "a_mode".to_string());
+        let write_f2_op2 = Operation::write(f2.clone(), "something".to_string(), 1, 1);
         let stat_d1_op = Operation::stat(d1.clone());
         let read_f3_op = Operation::read(f3.clone(), 1, 1);
         let read_f4_op = Operation::read(f4.clone(), 1, 1);

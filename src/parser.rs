@@ -474,11 +474,7 @@ impl Parser {
     }
 
     // parse a fstat line
-    fn fstat(
-        &mut self,
-        pid: usize,
-        args: String,
-    ) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -497,11 +493,7 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                let file_type = self.file_type(
-                    &args,
-                    &path,
-                    &format!("fstat: {}", args),
-                )?;
+                let file_type = self.file_type(&args, &path, &format!("fstat: {}", args))?;
                 if file_type == FileType::Other {
                     Ok(Operation::no_op())
                 } else {
