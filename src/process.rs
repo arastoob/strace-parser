@@ -1,11 +1,12 @@
-use crate::op::SharedOperation;
+// use crate::op::SharedOperation;
 use std::fmt::Formatter;
 use std::hash::Hash;
+use crate::Operation;
 
 #[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Process {
     pid: usize,
-    ops: Vec<SharedOperation>, // the process operations
+    ops: Vec<Operation>, // the process operations
 }
 
 impl Process {
@@ -13,15 +14,15 @@ impl Process {
         Self { pid, ops: vec![] }
     }
 
-    pub fn add_op(&mut self, op: SharedOperation) {
+    pub fn add_op(&mut self, op: Operation) {
         self.ops.push(op);
     }
 
-    pub fn ops(&self) -> &Vec<SharedOperation> {
+    pub fn ops(&self) -> &Vec<Operation> {
         &self.ops
     }
 
-    pub fn ops_mut(&mut self) -> &mut Vec<SharedOperation> {
+    pub fn ops_mut(&mut self) -> &mut Vec<Operation> {
         &mut self.ops
     }
 
