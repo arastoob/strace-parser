@@ -3,6 +3,7 @@ use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::rc::{Rc, Weak};
 use std::slice::Iter;
+use crate::error::Error;
 
 ///
 /// A Directed Acyclic Graph
@@ -47,17 +48,17 @@ where
         Self { nodes, edges }
     }
 
-    pub fn add_node(&mut self, data: N) -> Rc<Node<N>> {
+    pub fn add_node(&mut self, data: N) -> Result<Rc<Node<N>>, Error> {
         let node = Rc::new(Node::new(data));
         if !self.node_exist(&node) {
             self.nodes.push(node.clone());
-            node
+            Ok(node)
         } else {
-            self.nodes
+            Ok(self.nodes
                 .iter()
                 .find(|n| n.data == node.data)
-                .unwrap()
-                .clone()
+                .ok_or(Error::NoneValue(format!("the find result of {}", node.data())))?
+                .clone())
         }
     }
 
@@ -437,27 +438,30 @@ where
 mod test {
     use crate::dag::DAG;
     use std::rc::{Rc, Weak};
+    use crate::error::Error;
 
     #[test]
-    fn add_node() {
+    fn add_node() -> Result<(), Error> {
         let mut dag1: DAG<i32, String> = DAG::new();
-        dag1.add_node(1);
-        dag1.add_node(2);
-        dag1.add_node(1);
+        dag1.add_node(1)?;
+        dag1.add_node(2)?;
+        dag1.add_node(1)?;
         assert_eq!(dag1.nodes.len(), 2);
 
         let mut dag2: DAG<&str, String> = DAG::new();
-        dag2.add_node("1");
-        dag2.add_node("2");
-        dag2.add_node("1");
+        dag2.add_node("1")?;
+        dag2.add_node("2")?;
+        dag2.add_node("1")?;
         assert_eq!(dag2.nodes.len(), 2);
+
+        Ok(())
     }
 
     #[test]
-    fn add_edge() {
+    fn add_edge() -> Result<(), Error> {
         let mut dag = DAG::new();
-        let n1 = dag.add_node(1);
-        let n2 = dag.add_node(2);
+        let n1 = dag.add_node(1)?;
+        let n2 = dag.add_node(2)?;
 
         let e1 = dag.add_edge("a_label", n1.clone(), n2.clone());
         // we cannot add repeated edge
@@ -468,10 +472,12 @@ mod test {
 
         assert_eq!(e1.source, n1);
         assert_eq!(e1.target, n2);
+
+        Ok(())
     }
 
     #[test]
-    fn remove_edge() {
+    fn remove_edge() -> Result<(), Error> {
         //
         //         n1            n4
         //        /  \           /
@@ -484,10 +490,10 @@ mod test {
         //
 
         let mut dag = DAG::new();
-        let n1 = dag.add_node("n1");
-        let n2 = dag.add_node("n2");
-        let n3 = dag.add_node("n3");
-        let n4 = dag.add_node("n4");
+        let n1 = dag.add_node("n1")?;
+        let n2 = dag.add_node("n2")?;
+        let n3 = dag.add_node("n3")?;
+        let n4 = dag.add_node("n4")?;
 
         dag.add_edge("n1_n2", n1.clone(), n2.clone());
         dag.add_edge("n1_n3", n1.clone(), n3.clone());
@@ -498,11 +504,11 @@ mod test {
 
         let edges = dag.edges_to(n3.clone());
         assert!(edges.is_some());
-        assert_eq!(edges.unwrap().len(), 2);
+        assert_eq!(edges.ok_or(Error::NoneValue("dag edges".to_string()))?.len(), 2);
 
         let edges = dag.edges_to(n2.clone());
         assert!(edges.is_some());
-        let edge = edges.unwrap()[0].clone();
+        let edge = edges.ok_or(Error::NoneValue("dag edges".to_string()))?[0].clone();
         assert_eq!(edge.label, "n1_n2");
         assert_eq!(edge.source, n1);
         assert_eq!(edge.target, n2);
@@ -525,10 +531,12 @@ mod test {
         assert_eq!(dag.edges.len(), 2);
         assert_eq!(dag.in_degree_of(n2), 0);
         assert_eq!(dag.out_degree_of(n1), 1);
+
+        Ok(())
     }
 
     #[test]
-    fn remove_node() {
+    fn remove_node() -> Result<(), Error> {
         //
         //         n1            n4
         //        /  \           /
@@ -541,10 +549,10 @@ mod test {
         //
 
         let mut dag = DAG::new();
-        let n1 = dag.add_node("n1");
-        let n2 = dag.add_node("n2");
-        let n3 = dag.add_node("n3");
-        let n4 = dag.add_node("n4");
+        let n1 = dag.add_node("n1")?;
+        let n2 = dag.add_node("n2")?;
+        let n3 = dag.add_node("n3")?;
+        let n4 = dag.add_node("n4")?;
 
         dag.add_edge("n1_n2", n1.clone(), n2.clone());
         dag.add_edge("n1_n3", n1.clone(), n3.clone());
@@ -555,11 +563,11 @@ mod test {
 
         let edges = dag.edges_to(n3.clone());
         assert!(edges.is_some());
-        assert_eq!(edges.unwrap().len(), 2);
+        assert_eq!(edges.ok_or(Error::NoneValue("dag edges".to_string()))?.len(), 2);
 
         let edges = dag.edges_to(n2.clone());
         assert!(edges.is_some());
-        let edge = edges.unwrap()[0].clone();
+        let edge = edges.ok_or(Error::NoneValue("dag edges".to_string()))?[0].clone();
         assert_eq!(edge.label, "n1_n2");
         assert_eq!(edge.source, n1);
         assert_eq!(edge.target, n2);
@@ -583,10 +591,12 @@ mod test {
         assert_eq!(dag.edges.len(), 1);
         assert_eq!(dag.out_degree_of(n1), 1);
         assert_eq!(dag.out_degree_of(n4), 0);
+
+        Ok(())
     }
 
     #[test]
-    fn dag() {
+    fn dag() -> Result<(), Error> {
         //
         //         n1            n4
         //        /  \           /
@@ -599,10 +609,10 @@ mod test {
         //
 
         let mut dag = DAG::new();
-        let n1 = dag.add_node("n1");
-        let n2 = dag.add_node("n2");
-        let n3 = dag.add_node("n3");
-        let n4 = dag.add_node("n4");
+        let n1 = dag.add_node("n1")?;
+        let n2 = dag.add_node("n2")?;
+        let n3 = dag.add_node("n3")?;
+        let n4 = dag.add_node("n4")?;
 
         dag.add_edge("n1_n2", n1.clone(), n2.clone());
         dag.add_edge("n1_n3", n1.clone(), n3.clone());
@@ -628,17 +638,19 @@ mod test {
             &n3.incoming_neighbors()[1],
             &Rc::downgrade(&n4)
         ));
+
+        Ok(())
     }
 
     #[test]
-    fn topological_sort() {
+    fn topological_sort() -> Result<(), Error> {
 
         let mut dag = DAG::new();
-        let node0 = dag.add_node(0);
-        let node1 = dag.add_node(1);
-        let node2 = dag.add_node(2);
-        let node3 = dag.add_node(3);
-        let node4 = dag.add_node(4);
+        let node0 = dag.add_node(0)?;
+        let node1 = dag.add_node(1)?;
+        let node2 = dag.add_node(2)?;
+        let node3 = dag.add_node(3)?;
+        let node4 = dag.add_node(4)?;
 
         dag.add_edge("", node0, node2.clone());
         dag.add_edge("", node1, node2.clone());
@@ -652,5 +664,7 @@ mod test {
         assert_eq!(ordered.pop(), Some(node4));
         assert_eq!(ordered.pop(), Some(node3));
         assert_eq!(ordered.pop(), Some(node2));
+
+        Ok(())
     }
 }
