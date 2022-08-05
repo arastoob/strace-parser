@@ -87,13 +87,13 @@ impl Parser {
         }
     }
 
-    pub fn parse(&mut self) -> Result<Vec<Process>, Box<dyn std::error::Error>> {
+    pub fn parse(&mut self) -> Result<DependencyGraph, Box<dyn std::error::Error>> {
         let mut processes: Vec<Process> = vec![];
 
         let file = std::fs::File::open(self.log_file.clone())?;
         let reader = BufReader::new(file);
 
-        for (line_no, line) in reader.lines().enumerate() {
+        for line in reader.lines() {
             let line = line?;
 
             // make sure the strace logs has process ids for each logged operation
@@ -141,7 +141,7 @@ impl Parser {
                             process.add_op(self.stat(args)?.into());
                         }
                         "fstat" => {
-                            process.add_op(self.fstat(pid, args, line_no)?.into());
+                            process.add_op(self.fstat(pid, args)?.into());
                         }
                         "statx" => {
                             process.add_op(self.statx(pid, args)?.into());
@@ -188,13 +188,9 @@ impl Parser {
             }
         }
 
-        let dep_dag = DependencyGraph::new(processes)?;
-        // mark the dependencies
-        dep_dag.mark_dependencies()?;
-        // get the process list with the pre lists per each operation
-        let processes = dep_dag.processes();
+        let dep_graph = DependencyGraph::new(processes)?.order()?;
 
-        Ok(processes)
+        Ok(dep_graph)
     }
 
     // parse an openat line
@@ -478,12 +474,7 @@ impl Parser {
     }
 
     // parse a fstat line
-    fn fstat(
-        &mut self,
-        pid: usize,
-        args: String,
-        line_no: usize,
-    ) -> Result<Operation, Box<dyn std::error::Error>> {
+    fn fstat(&mut self, pid: usize, args: String) -> Result<Operation, Box<dyn std::error::Error>> {
         // int fstat(int fd, struct stat *statbuf);
         // return information about a file, in the buffer pointed to by statbuf
         //
@@ -502,11 +493,7 @@ impl Parser {
             Some(opend_file) => {
                 let path = opend_file.path.clone();
 
-                let file_type = self.file_type(
-                    &args,
-                    &path,
-                    &format!("fstat: {} at line {}", args, line_no),
-                )?;
+                let file_type = self.file_type(&args, &path, &format!("fstat: {}", args))?;
                 if file_type == FileType::Other {
                     Ok(Operation::no_op())
                 } else {
@@ -1455,7 +1442,6 @@ mod test {
         let mut parser = Parser::new(PathBuf::new());
         let openat_line = "909196 openat(AT_FDCWD, \"a_path\", O_RDONLY|O_CLOEXEC) = 3".to_string();
         if let Parts::Finished(pid, _, args, ret) = parser.parts(&openat_line)? {
-            println!("args: {}", args);
             let _operation = parser.openat(pid, args, ret)?;
         } else {
             panic!(
@@ -1467,7 +1453,7 @@ mod test {
         let fstat_line =
             "909196 fstat(3, {st_mode=S_IFREG|0644, st_size=95921, ...}) = 0".to_string();
         if let Parts::Finished(pid, _, args, _) = parser.parts(&fstat_line)? {
-            let fstat_op = parser.fstat(pid, args, 0)?;
+            let fstat_op = parser.fstat(pid, args)?;
             assert_eq!(
                 fstat_op.op_type(),
                 &OperationType::Fstat(Arc::new(File::new("/a_path")))

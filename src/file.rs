@@ -26,6 +26,6 @@ impl File {
 
 impl std::fmt::Display for File {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "file({})", self.path().unwrap())
+        write!(f, "file({})", self.path().unwrap_or(""))
     }
 }

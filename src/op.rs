@@ -1,10 +1,8 @@
-use crate::error::Error;
 use crate::file::File;
 use std::fmt;
 use std::fmt::{Display, Formatter};
-use std::hash::{Hash, Hasher};
-use std::slice::Iter;
-use std::sync::{Arc, Mutex};
+use std::hash::Hash;
+use std::sync::Arc;
 
 #[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub enum OperationType {
@@ -28,94 +26,16 @@ pub enum OperationType {
 }
 
 ///
-/// A wrapper around a shared operation
-///
-#[derive(Clone)]
-pub struct SharedOperation {
-    shared_op: Arc<Mutex<Operation>>,
-}
-
-impl SharedOperation {
-    pub fn op(&self) -> Arc<Mutex<Operation>> {
-        self.shared_op.clone()
-    }
-}
-
-impl Hash for SharedOperation {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.shared_op.lock().unwrap().hash(state);
-    }
-}
-
-impl PartialEq for SharedOperation {
-    fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.shared_op, &other.shared_op)
-    }
-}
-
-impl Eq for SharedOperation {}
-
-impl Display for SharedOperation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        // TODO handle this unwrap
-        write!(f, "{}", self.op().lock().unwrap())
-    }
-}
-
-impl From<Operation> for SharedOperation {
-    fn from(op: Operation) -> Self {
-        Self {
-            shared_op: Arc::new(Mutex::new(op)),
-        }
-    }
-}
-
-///
-/// The operation that should be executed by other processes before an operation
-///
-#[derive(Hash, Clone)]
-pub struct PreOperation {
-    pre_op: SharedOperation, // the pre op
-    by: usize,               // the process pid that is doing the pre op
-}
-
-impl PreOperation {
-    pub fn new(op: SharedOperation, by: usize) -> Self {
-        Self { pre_op: op, by }
-    }
-
-    pub fn pre_op(&self) -> SharedOperation {
-        self.pre_op.clone()
-    }
-
-    pub fn by(&self) -> usize {
-        self.by
-    }
-}
-
-impl Display for PreOperation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "pid: {}, {}", self.by, self.pre_op)
-    }
-}
-
-///
 /// The operation that is done by a process
 ///
-#[derive(Clone, Hash)]
+#[derive(Clone, Hash, PartialEq, Eq)]
 pub struct Operation {
     op_type: OperationType, // type of operation
-    pre: Vec<PreOperation>, // the list of operations that should be executed before this operation
-    executed: bool,         // whether this operation has been executed or not
 }
 
 impl Operation {
     pub fn new(op_type: OperationType) -> Self {
-        Operation {
-            op_type,
-            pre: vec![],
-            executed: false,
-        }
+        Operation { op_type }
     }
 
     pub fn read(file: Arc<File>, len: usize, offset: i32) -> Self {
@@ -242,61 +162,6 @@ impl Operation {
             &OperationType::NoOp => "NoOp".to_string(),
         }
     }
-
-    ///
-    /// Add an operation to the list of operations that should be executed before this operation
-    ///
-    pub fn add_pre(&mut self, pre: PreOperation) {
-        self.pre.push(pre);
-    }
-
-    ///
-    /// Get the list of operations that should be executed before this operation
-    ///
-    pub fn pre_list(&self) -> Iter<'_, PreOperation> {
-        self.pre.iter()
-    }
-
-    ///
-    /// An operation can be executed if
-    ///     - there is no other operation in its pre list, or
-    ///     - all the pre operations have been executed
-    ///
-    pub fn can_be_executed(&self) -> Result<bool, Box<dyn std::error::Error>> {
-        if self.pre.is_empty() {
-            return Ok(true);
-        }
-
-        for pre in self.pre_list() {
-            // TODO It's nicer to have pre.pre_op().op().lock()? rather than this match
-            match pre.pre_op().op().lock() {
-                Ok(pre) => {
-                    if !pre.is_executed() {
-                        return Ok(false);
-                    }
-                }
-                Err(err) => {
-                    return Err(Box::new(Error::PoisonError(err.to_string())));
-                }
-            }
-        }
-
-        Ok(true)
-    }
-
-    ///
-    /// Is the operation executed
-    ///
-    pub fn is_executed(&self) -> bool {
-        self.executed
-    }
-
-    ///
-    /// Mark the operation as executed
-    ///
-    pub fn executed(&mut self) {
-        self.executed = true;
-    }
 }
 
 impl fmt::Display for OperationType {
@@ -333,22 +198,7 @@ impl fmt::Display for OperationType {
 
 impl Display for Operation {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}, executed: {}, pre operations: ",
-            self.op_type,
-            self.is_executed()
-        )?;
-        if self.pre.is_empty() {
-            write!(f, "[]")?;
-        } else {
-            write!(f, "[")?;
-            writeln!(f, "")?;
-            for pre in self.pre.iter() {
-                writeln!(f, "\t\t{}", pre)?;
-            }
-            write!(f, "\t\t]")?;
-        }
+        write!(f, "{}", self.op_type,)?;
 
         Ok(())
     }
