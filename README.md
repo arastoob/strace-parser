@@ -17,7 +17,6 @@ can be found from the [trace-examples](https://gitlab.com/arastoob/strace-parser
 For including the process/thread ids in the Strace outputs, the `-f` argument should be passed to `strace` command.
 
 ## Example
-<hr />
 The below example shows how to use strace-parser to parse a strace log file and generate the process DAG:
 <br />
 <pre>
@@ -50,7 +49,6 @@ let files = parser.existing_files()?;
 </pre>
 
 ## Run
-<hr />
 To run the strace-parser, execute the following command:
 <br />
 <pre>
