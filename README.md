@@ -18,7 +18,7 @@ For including the process/thread ids in the Strace outputs, the `-f` argument sh
 
 ## Example
 <hr />
-The below example shows how to use *Strace-parser* to parse a strace log file and generate the process DAG:
+The below example shows how to use Strace-parser to parse a strace log file and generate the process DAG:
 <br />
 <pre>
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -51,7 +51,7 @@ let files = parser.existing_files()?;
 
 ## Run
 <hr />
-To run the *Strace-parser*, execute the following command:
+To run the Strace-parser, execute the following command:
 <br />
 <pre>
 cargo run --release -- -p {path-to-strace-log-file} -o {path-to-output-file}
