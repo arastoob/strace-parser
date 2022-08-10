@@ -52,6 +52,8 @@ let files = parser.existing_files()?;
 To run the strace-parser, execute the following command:
 <br />
 <pre>
+git clone https://gitlab.com/arastoob/strace-parser.git
+cd strace-parser/
 cargo run --release -- -p {path-to-strace-log-file} -o {path-to-output-file}
 </pre>
 
