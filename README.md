@@ -27,7 +27,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .create(true)
         .write(true)
         .append(false)
-        .open(args.out)?;
+        .open("output.txt")?;
     let mut writer = BufWriter::new(out_file);
     let mut available_set = dep_graph.available_set()?;
     while !available_set.is_empty() {
