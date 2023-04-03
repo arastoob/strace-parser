@@ -1,12 +1,11 @@
-use crate::op::Operation;
+use crate::op::SharedOperation;
 use std::fmt::Formatter;
 use std::hash::Hash;
-use std::slice::Iter;
 
-#[derive(Debug, PartialEq, Hash, Eq, Clone)]
+#[derive(PartialEq, Eq, Clone, Hash)]
 pub struct Process {
     pid: usize,
-    ops: Vec<(usize, Operation)>, // the process operations and their unique ids
+    ops: Vec<SharedOperation>, // the process operations
 }
 
 impl Process {
@@ -14,16 +13,16 @@ impl Process {
         Self { pid, ops: vec![] }
     }
 
-    pub fn add_op(&mut self, id: usize, op: Operation) {
-        self.ops.push((id, op));
+    pub fn add_op(&mut self, op: SharedOperation) {
+        self.ops.push(op);
     }
 
-    pub fn remove_op(&mut self, id: &usize) {
-        self.ops.retain(|(op_id, _)| op_id != id);
+    pub fn ops(&self) -> &Vec<SharedOperation> {
+        &self.ops
     }
 
-    pub fn ops(&self) -> Iter<'_, (usize, Operation)> {
-        self.ops.iter()
+    pub fn ops_mut(&mut self) -> &mut Vec<SharedOperation> {
+        &mut self.ops
     }
 
     pub fn pid(&self) -> usize {
@@ -33,8 +32,8 @@ impl Process {
 
 impl std::fmt::Display for Process {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        for (op_id, op) in self.ops.iter() {
-            writeln!(f, "{} {}:{}", self.pid, op_id, op)?;
+        for op in self.ops.iter() {
+            writeln!(f, "{} {}", self.pid, op)?;
         }
 
         Ok(())

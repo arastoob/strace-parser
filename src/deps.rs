@@ -1,9 +1,10 @@
-use crate::dag::{Edge, DAG};
+use crate::dag::DAG;
 use crate::error::Error;
 use crate::file::File;
+use crate::op::{PreOperation, SharedOperation};
 use crate::process::Process;
 use std::fmt::{Display, Formatter};
-use std::rc::Rc;
+use std::hash::Hash;
 use std::sync::Arc;
 
 // The dependecy graph node's can be Process or File
@@ -18,13 +19,6 @@ impl GraphNode {
         match self {
             &GraphNode::File(_) => "file",
             &GraphNode::Process(_) => "process",
-        }
-    }
-
-    pub fn process_mut(&mut self) -> Result<&mut Process, Error> {
-        match self {
-            GraphNode::Process(p) => Ok(p),
-            _ => Err(Error::InvalidType("GraphNode".to_string())),
         }
     }
 
@@ -50,29 +44,29 @@ impl Display for GraphNode {
 /// The nodes are Processes and Files and the edges between them are the operation names
 ///
 pub struct DependencyGraph {
-    pub dag: DAG<GraphNode, String>,
+    pub dag: DAG<GraphNode, SharedOperation>,
 }
 
 impl DependencyGraph {
-    // Generate the dependency graph form the vector of processes
-    pub fn new(processes: Vec<Process>) -> Self {
+    /// Generate the dependency graph form the vector of processes
+    pub fn new(processes: Vec<Process>) -> Result<Self, Error> {
         let mut dag = DAG::new();
 
         for process in processes {
-            // let process = Rc::new(process);
             let pnode = dag.add_node(GraphNode::Process(process.clone()));
-            for (op_id, op) in process.ops() {
-                if let Some(file) = op.file() {
+            for op in process.ops() {
+                if let Some(file) = op.op().lock()?.file() {
                     let fnode = dag.add_node(GraphNode::File(file));
-                    dag.add_edge(format!("{}:{}", op_id, op.name()), pnode.clone(), fnode);
+                    // dag.add_edge(format!("{}:{}", op_id, op.name()), pnode.clone(), fnode);
+                    dag.add_edge(op.clone(), pnode.clone(), fnode);
                 }
             }
         }
 
-        Self { dag }
+        Ok(Self { dag })
     }
 
-    // Generate the vector of processes from the dependency graph
+    /// Generate the vector of processes from the dependency graph
     pub fn processes(&self) -> Vec<Process> {
         // TODO: fix the unwrap
         Vec::from_iter(
@@ -84,58 +78,113 @@ impl DependencyGraph {
         )
     }
 
-    // the sub-edges from the main graph that contains the parallel read and write accesses to the same file node
-    fn parallel_rw_edges(&self) -> Vec<Rc<Edge<GraphNode, String>>> {
-        // the sub graph containing the nodes and their edges that represent multiple accesses to a file node
-
-        // read and write edges to the files accessed more than one time
-        let multi_rw_edges = self
-            .dag
-            .edges()
-            .filter(|edge| edge.target().in_degree() > 1)
-            .filter(|edge| edge.label().contains("Write") || edge.label().contains("Read"))
-            .cloned()
-            .collect::<Vec<_>>();
-
-        // the sub graph from multi_accessed_edges that contains just the read and write accesses
-        let rw_dag = DAG::from_edges(multi_rw_edges);
-
-        let mut parallel_rw_edges = vec![];
-        for node in rw_dag.nodes() {
-            if let Some(mut edges_to) = rw_dag.edges_to(node.clone()) {
-                if edges_to
-                    .iter()
-                    .find(|e| e.label().contains("Read"))
-                    .is_some()
-                    && edges_to
-                        .iter()
-                        .find(|e| e.label().contains("Write"))
-                        .is_some()
-                {
-                    // this is the file node that has both read and write access
-                    parallel_rw_edges.append(&mut edges_to);
+    pub fn mark_dependencies(&self) -> Result<(), Error> {
+        for node in self.dag.nodes() {
+            if node.in_degree() > 1 {
+                // the file node, say f1, which have accessed more than one time
+                if let Some(edges) = self.dag.edges_to(node.clone()) {
+                    for current_edge in edges.iter() {
+                        // edges to f1
+                        let current_edge_name = current_edge.label().op().lock()?.name();
+                        let current_pid = current_edge.source().data().process()?.pid();
+                        match current_edge_name.as_str() {
+                            "Mkdir" => {
+                                // mkdir should be executed before all other operations, except rename
+                                let other_edges = edges
+                                    .iter()
+                                    .filter(|edge| *edge != current_edge)
+                                    .collect::<Vec<_>>();
+                                for edge in other_edges {
+                                    let edge_name = edge.label().op().lock()?.name();
+                                    if edge_name != "Mkdir" {
+                                        // add the current operation as pre-operation to other operations by other processes
+                                        let pid = edge.source().data().process()?.pid();
+                                        if pid != current_pid {
+                                            edge.label().op().lock()?.add_pre(PreOperation::new(
+                                                current_edge.label().clone(),
+                                                current_pid,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            "Mknod" => {
+                                // mknod should be executed before all other operations, except rename
+                                let other_edges = edges
+                                    .iter()
+                                    .filter(|edge| *edge != current_edge)
+                                    .collect::<Vec<_>>();
+                                for edge in other_edges {
+                                    let edge_name = edge.label().op().lock()?.name();
+                                    if edge_name != "Mknod" {
+                                        // add the current operation as pre-operation to other operations by other processes
+                                        let pid = edge.source().data().process()?.pid();
+                                        if pid != current_pid {
+                                            edge.label().op().lock()?.add_pre(PreOperation::new(
+                                                current_edge.label().clone(),
+                                                current_pid,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            "Write" => {
+                                // write should be executed before read, remove and truncate operations
+                                let other_edges = edges
+                                    .iter()
+                                    .filter(|edge| *edge != current_edge)
+                                    .collect::<Vec<_>>();
+                                for edge in other_edges {
+                                    let edge_name = edge.label().op().lock()?.name();
+                                    if edge_name == "Read"
+                                        || edge_name == "Remove"
+                                        || edge_name == "Rename"
+                                        || edge_name == "Truncate"
+                                    {
+                                        // add the current operation as pre-operation to other operations by other processes
+                                        let pid = edge.source().data().process()?.pid();
+                                        if pid != current_pid {
+                                            edge.label().op().lock()?.add_pre(PreOperation::new(
+                                                current_edge.label().clone(),
+                                                current_pid,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            "Read" => {
+                                // read should be executed before remove and truncate operations
+                                let other_edges = edges
+                                    .iter()
+                                    .filter(|edge| *edge != current_edge)
+                                    .collect::<Vec<_>>();
+                                for edge in other_edges {
+                                    let edge_name = edge.label().op().lock()?.name();
+                                    if edge_name == "Remove"
+                                        || edge_name == "Rename"
+                                        || edge_name == "Truncate"
+                                    {
+                                        // add the current operation as pre-operation to other operations by other processes
+                                        let pid = edge.source().data().process()?.pid();
+                                        if pid != current_pid {
+                                            edge.label().op().lock()?.add_pre(PreOperation::new(
+                                                current_edge.label().clone(),
+                                                current_pid,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                // other operations such as stat, fstat, ... can be executed in parallel
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        parallel_rw_edges
-    }
-
-    // the sub-graph from the main graph that contains the read accesses to the files that need
-    // to be postponed, i.e, the read accesses that are in parallel with the write accesses
-    // to the same file node
-    pub fn postponed_r_graph(&self) -> DependencyGraph {
-        DependencyGraph {
-            // the graph from the parallel read and write edges that contains the read accesses
-            // that should be executed later
-            dag: DAG::from_edges(
-                self.parallel_rw_edges()
-                    .iter()
-                    .filter(|edge| edge.label().contains("Read"))
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            ),
-        }
+        Ok(())
     }
 }
 
@@ -147,92 +196,115 @@ impl Display for DependencyGraph {
 
 #[cfg(test)]
 mod test {
-    use std::sync::Arc;
-    use crate::dag::DAG;
     use crate::deps::DependencyGraph;
     use crate::error::Error;
     use crate::file::File;
-    use crate::op::Operation;
+    use crate::op::{Operation, SharedOperation};
     use crate::process::Process;
+    use std::sync::Arc;
 
-    fn processes() -> Vec<Process> {
+    #[test]
+    fn dependencies() -> Result<(), Error> {
+        // the files
         let f1 = Arc::new(File::new("f1".to_string()));
         let f2 = Arc::new(File::new("f2".to_string()));
         let d1 = Arc::new(File::new("d1".to_string()));
         let f3 = Arc::new(File::new("f3".to_string()));
         let f4 = Arc::new(File::new("f4".to_string()));
 
-        let mut processes = vec![];
+        // the operations
+        let read_f1_op: SharedOperation = Operation::read(f1.clone(), 1, 1).into();
+        let mknod_f2_op1: SharedOperation = Operation::mknod(f2.clone()).into();
+        let mknod_f2_op2: SharedOperation = Operation::mknod(f2.clone()).into();
+        let write_f2_op1: SharedOperation =
+            Operation::write(f2.clone(), "something".to_string(), 1, 1).into();
+        let write_f4_op: SharedOperation =
+            Operation::write(f4.clone(), "something".to_string(), 1, 1).into();
+        let remove_f2_op: SharedOperation = Operation::remove(f2.clone()).into();
+        let mkdir_d1_op: SharedOperation =
+            Operation::mkdir(d1.clone(), "a_mode".to_string()).into();
+        let write_f2_op2: SharedOperation =
+            Operation::write(f2.clone(), "something".to_string(), 1, 1).into();
+        let stat_d1_op: SharedOperation = Operation::stat(d1.clone()).into();
+        let read_f3_op: SharedOperation = Operation::read(f3.clone(), 1, 1).into();
+        let read_f4_op: SharedOperation = Operation::read(f4.clone(), 1, 1).into();
+
+        // the processes
         let mut p1 = Process::new(1);
         let mut p2 = Process::new(2);
         let mut p3 = Process::new(3);
 
-        p1.add_op(1, Operation::read(f1.clone(), 1, 1));
-        p1.add_op(2, Operation::mknod(f2.clone()));
-        p1.add_op(
-            3,
-            Operation::write(f2.clone(), "something".to_string(), 1, 1),
-        );
-        p1.add_op(
-            4,
-            Operation::write(f4.clone(), "something".to_string(), 1, 1),
-        );
-        p2.add_op(5, Operation::remove(f2.clone()));
-        p2.add_op(6, Operation::mkdir(d1.clone(), "a_mode".to_string()));
-        p2.add_op(
-            7,
-            Operation::write(f2.clone(), "something".to_string(), 1, 1),
-        );
-        p3.add_op(8, Operation::stat(d1.clone()));
-        p3.add_op(9, Operation::read(f3.clone(), 1, 1));
-        p3.add_op(10, Operation::read(f4.clone(), 1, 1));
+        // the operations done by each process
+        p1.add_op(read_f1_op.clone());
+        p1.add_op(mknod_f2_op1.clone());
+        p1.add_op(write_f2_op1.clone());
+        p1.add_op(write_f4_op.clone());
+        p2.add_op(remove_f2_op.clone());
+        p2.add_op(mkdir_d1_op.clone());
+        p2.add_op(write_f2_op2.clone());
+        p3.add_op(stat_d1_op.clone());
+        p3.add_op(read_f3_op.clone());
+        p3.add_op(read_f4_op.clone());
+        p3.add_op(mknod_f2_op2.clone());
 
+        let mut processes = vec![];
         processes.push(p1);
         processes.push(p2);
         processes.push(p3);
 
-        processes
-    }
+        let dep_graph = DependencyGraph::new(processes)?;
 
-    #[test]
-    fn postponed_dag() -> Result<(), Error> {
-        let dep_graph = DependencyGraph::new(processes());
-
-        // the main graph is:
-        //    1 --> f1 [1:Read]
-        //    1 --> f2 [2:Mknod]
-        //    1 --> f2 [3:Write]
-        //    1 --> f4 [4:Write]
-        //    2 --> f2 [5:Remove]
-        //    2 --> f2 [7:Write]
-        //    2 --> d1 [6:Mkdir]
-        //    3 --> d1 [8:Stat]
-        //    3 --> f3 [9:Read]
-        //    3 --> f4 [10:Read]
+        // the dep_graph should look like this:
+        //    p1 --> f1 [Read]
+        //    p1 --> f2 [Mknod]
+        //    p1 --> f2 [Write]
+        //    p1 --> f4 [Write]
+        //    p2 --> f2 [Remove]
+        //    p2 --> f2 [Write]
+        //    p2 --> d1 [Mkdir]
+        //    p3 --> d1 [Stat]
+        //    p3 --> f3 [Read]
+        //    p3 --> f4 [Read]
+        //    p3 --> f2 [Mknod]
 
         assert_eq!(dep_graph.dag.node_count(), 8);
-        assert_eq!(dep_graph.dag.edge_count(), 10);
+        assert_eq!(dep_graph.dag.edge_count(), 11);
         println!("main graph:");
         println!("{}", dep_graph);
 
-        // the sub-graph containing the parallel read and write accesses to the same file node should be:
-        //    1 --> f4 [4:Write]
-        //    3 --> f4 [10:Read]
+        dep_graph.mark_dependencies()?;
+        println!("main graph, marked:");
+        println!("{}", dep_graph);
 
-        let parallel_rw_dag = DAG::from_edges(dep_graph.parallel_rw_edges());
-        assert_eq!(parallel_rw_dag.node_count(), 3);
-        assert_eq!(parallel_rw_dag.edge_count(), 2);
-        println!("parallel read write sub-graph:");
-        println!("{}", parallel_rw_dag);
+        // after marking the dependencies, the mknod_f2_op should be in the pre list of write_f2_op2 and remove_f2_op
+        assert!(write_f2_op2
+            .op()
+            .lock()?
+            .pre_list()
+            .find(|pre_op| pre_op.pre_op() == mknod_f2_op1)
+            .is_some());
+        assert!(remove_f2_op
+            .op()
+            .lock()?
+            .pre_list()
+            .find(|pre_op| pre_op.pre_op() == mknod_f2_op1)
+            .is_some());
 
-        // the postponed sub-graph should be:
-        //    3 --> f4 [10:Read]
+        // note that mknod_f2_op1 should not be in the pre list of write_f2_op1 as both operations are done by process p1
+        assert!(write_f2_op1
+            .op()
+            .lock()?
+            .pre_list()
+            .find(|pre_op| pre_op.pre_op() == mknod_f2_op1)
+            .is_none());
 
-        let postponed_r_graph = dep_graph.postponed_r_graph();
-        assert_eq!(postponed_r_graph.dag.node_count(), 2);
-        assert_eq!(postponed_r_graph.dag.edge_count(), 1);
-        println!("postponed read sub-graph:");
-        println!("{}", postponed_r_graph);
+        // also, write_f4_op should be in the pre list of read_f4_op
+        assert!(read_f4_op
+            .op()
+            .lock()?
+            .pre_list()
+            .find(|pre_op| pre_op.pre_op() == write_f4_op)
+            .is_some());
 
         Ok(())
     }
