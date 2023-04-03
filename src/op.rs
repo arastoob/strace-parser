@@ -4,7 +4,7 @@ use std::fmt;
 use std::fmt::{Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::slice::Iter;
-use std::sync::{Arc, LockResult, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 #[derive(Debug, PartialEq, Clone, Hash, Eq)]
 pub enum OperationType {
@@ -23,6 +23,7 @@ pub enum OperationType {
     StatFS(Arc<File>),                    // args: path
     Fstatat(Arc<File>),                   // args: path
     Clone(usize),                         // args: process id of the cloned process
+    Chdir(String),                        // args: the current directory path
     NoOp,
 }
 
@@ -181,6 +182,10 @@ impl Operation {
         Self::new(OperationType::Clone(pid))
     }
 
+    pub fn chdir(path: String) -> Self {
+        Self::new(OperationType::Chdir(path))
+    }
+
     ///
     /// Get the OperationType
     ///
@@ -208,6 +213,7 @@ impl Operation {
             OperationType::Fstatat(file) => Some(file.clone()),
             OperationType::Rename(file, _) => Some(file.clone()),
             OperationType::Clone(_) => None,
+            OperationType::Chdir(_) => None,
             OperationType::NoOp => None,
         }
     }
@@ -232,6 +238,7 @@ impl Operation {
             &OperationType::Fstatat(_) => "Fstatat".to_string(),
             &OperationType::Rename(_, _) => "Rename".to_string(),
             &OperationType::Clone(_) => "Clone".to_string(),
+            &OperationType::Chdir(_) => "Chdir".to_string(),
             &OperationType::NoOp => "NoOp".to_string(),
         }
     }
@@ -318,6 +325,7 @@ impl fmt::Display for OperationType {
                 write!(f, "rename({} {})", file, to)
             }
             &OperationType::Clone(ref pid) => write!(f, "clone({})", pid),
+            &OperationType::Chdir(ref path) => write!(f, "chdir({})", path),
             &OperationType::NoOp => write!(f, "no-op"),
         }
     }
